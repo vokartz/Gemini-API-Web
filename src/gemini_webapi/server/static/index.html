@@ -70,7 +70,7 @@
     }
     .content { padding: 14px; }
     .grid { display: grid; grid-template-columns: minmax(340px, 430px) minmax(0, 1fr); gap: 16px; }
-    .cards { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; }
+    .cards { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 10px; }
     .card {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -85,6 +85,29 @@
     .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .charts { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 12px; align-items: stretch; }
+    .chart-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      min-height: 150px;
+    }
+    .gauge { height: 10px; border-radius: 999px; background: #e8edf4; overflow: hidden; }
+    .gauge-fill { width: 0%; height: 100%; background: var(--ok); transition: width .2s ease; }
+    .gauge-fill.warn { background: var(--warn); }
+    .gauge-fill.bad { background: var(--danger); }
+    .bars { display: grid; gap: 8px; }
+    .bar-row { display: grid; grid-template-columns: minmax(120px, 190px) 1fr auto; gap: 8px; align-items: center; }
+    .bar-label, .bar-value { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bar-track { height: 9px; border-radius: 999px; background: #e8edf4; overflow: hidden; }
+    .bar-fill { width: 0%; height: 100%; background: var(--accent); }
+    .trend { display: grid; grid-template-columns: repeat(20, 1fr); gap: 3px; align-items: end; height: 48px; }
+    .trend span { display: block; min-height: 4px; border-radius: 3px 3px 0 0; background: #cfe0fb; }
+    .trend span.warn { background: var(--warn); }
+    .trend span.bad { background: var(--danger); }
     button {
       min-height: 36px;
       border: 1px solid var(--line);
@@ -136,10 +159,12 @@
     .account-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
     .account-name { font-weight: 700; overflow-wrap: anywhere; }
     .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-    table { width: 100%; border-collapse: collapse; min-width: 780px; }
-    th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    table { width: 100%; border-collapse: collapse; min-width: 1040px; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
     th { background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 650; }
     tr:last-child td { border-bottom: 0; }
+    .error-cell { white-space: normal; overflow-wrap: anywhere; min-width: 220px; max-width: 420px; }
+    .nowrap { white-space: nowrap; }
     .ok-text { color: var(--ok); font-weight: 650; }
     .bad-text { color: var(--danger); font-weight: 650; }
     pre {
@@ -180,7 +205,7 @@
     .modal-body { padding: 14px; display: grid; gap: 12px; }
     .notice { border: 1px solid #cfe0fb; background: var(--accent-soft); color: #24486f; border-radius: 8px; padding: 10px; font-size: 12px; }
     @media (max-width: 980px) {
-      .grid, .split, .three { grid-template-columns: 1fr; }
+      .grid, .split, .three, .charts { grid-template-columns: 1fr; }
       .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 560px) {
@@ -218,6 +243,20 @@
             <div class="card"><strong id="metricCurrent">-</strong><span class="hint">当前账户</span></div>
             <div class="card"><strong id="metricRequests">0</strong><span class="hint">持久日志数</span></div>
             <div class="card"><strong id="metricMedia">0</strong><span class="hint">媒体索引</span></div>
+            <div class="card"><strong id="metricErrorRate">0%</strong><span class="hint">最近错误率</span></div>
+            <div class="card"><strong id="metricWarnings">0</strong><span class="hint">预警项</span></div>
+          </div>
+          <div class="charts">
+            <div class="chart-box">
+              <div class="row"><b>错误率</b><span id="errorGaugeText" class="hint">最近 80 条</span></div>
+              <div class="gauge"><div id="errorGaugeFill" class="gauge-fill"></div></div>
+              <div id="errorTrend" class="trend"></div>
+              <div id="warningList" class="stack"></div>
+            </div>
+            <div class="chart-box">
+              <div class="row"><b>模型使用情况</b><span class="hint">按最近日志统计</span></div>
+              <div id="modelChart" class="bars"></div>
+            </div>
           </div>
           <div class="three">
             <div class="item"><b>Gemini 3.1 Pro</b><span class="hint">model: gemini 或 gemini-3.1-pro</span></div>
@@ -351,6 +390,37 @@
           <div id="mediaList" class="three"></div>
         </div>
       </section>
+      <section>
+        <div class="section-head">
+          <h2>媒体生成</h2>
+          <button id="mediaGenerateBtn" class="primary">生成媒体</button>
+        </div>
+        <div class="content grid">
+          <div class="stack">
+            <div class="split">
+              <label>类型
+                <select id="mediaGenerateKind">
+                  <option value="image">图片</option>
+                  <option value="video">视频</option>
+                  <option value="audio">音频</option>
+                </select>
+              </label>
+              <label>模型
+                <select id="mediaGenerateModel">
+                  <option value="gemini-3-flash">gemini-3-flash</option>
+                  <option value="gemini">gemini / 3.1 Pro</option>
+                  <option value="gemini-3.1-pro">gemini-3.1-pro</option>
+                </select>
+              </label>
+            </div>
+            <label>生成描述
+              <textarea id="mediaGeneratePrompt" placeholder="描述要生成的图片、视频或音频内容"></textarea>
+            </label>
+            <div class="notice">生成结果会继续保存到媒体索引；本地默认只记录 URL 和元信息。</div>
+          </div>
+          <pre id="mediaGenerateOutput">等待媒体生成...</pre>
+        </div>
+      </section>
     </div>
 
     <div id="accounts" class="view">
@@ -359,6 +429,7 @@
           <section>
             <div class="section-head"><h2>账户池</h2><button id="refreshAccountsBtn">刷新</button></div>
             <div class="content stack">
+              <div id="currentAccountPanel" class="notice">当前账户状态加载中...</div>
               <div class="row">
                 <button id="importBtn">导入</button>
                 <button id="exportBtn">导出</button>
@@ -453,6 +524,7 @@
         $("failureThreshold").value = status.failure_threshold;
         renderAccounts(status.accounts || []);
         renderMetrics();
+        renderCurrentAccount();
       } catch (error) {
         $("healthDot").classList.remove("ok");
         setMsg(`离线：${error.message}`);
@@ -483,10 +555,70 @@
     }
     function renderMetrics() {
       const accounts = state.status?.accounts || [];
+      const failed = state.logs.filter(log => !log.ok).length;
+      const errorRate = state.logs.length ? Math.round((failed / state.logs.length) * 100) : 0;
+      const warnings = dashboardWarnings(accounts, errorRate);
       $("metricAccounts").textContent = accounts.filter(a => a.enabled && !a.expired).length;
       $("metricCurrent").textContent = state.status?.current_account_id ?? "-";
       $("metricRequests").textContent = state.logs.length;
       $("metricMedia").textContent = state.media.length;
+      $("metricErrorRate").textContent = `${errorRate}%`;
+      $("metricWarnings").textContent = warnings.length;
+      renderDashboardCharts(errorRate, warnings);
+    }
+    function dashboardWarnings(accounts, errorRate) {
+      const warnings = [];
+      if (errorRate >= 30) warnings.push(`错误率 ${errorRate}% 偏高，请检查账号或模型。`);
+      else if (errorRate >= 15) warnings.push(`错误率 ${errorRate}% 达到预警线。`);
+      const current = accounts.find(a => a.current);
+      if (current?.expired) warnings.push("当前账户已标记过期，需要重新认证。");
+      if (current && current.failure_count >= Math.max(1, Number(state.status?.failure_threshold || 0))) warnings.push("当前账户失败次数已达到切换阈值。");
+      const disabled = accounts.filter(a => !a.enabled || a.expired).length;
+      if (disabled) warnings.push(`${disabled} 个账户不可用或已停用。`);
+      return warnings;
+    }
+    function renderDashboardCharts(errorRate, warnings) {
+      const gauge = $("errorGaugeFill");
+      gauge.style.width = `${Math.min(100, errorRate)}%`;
+      gauge.className = `gauge-fill ${errorRate >= 30 ? "bad" : errorRate >= 15 ? "warn" : ""}`;
+      $("errorGaugeText").textContent = `${state.logs.filter(l => !l.ok).length}/${state.logs.length || 0} 失败`;
+      $("warningList").innerHTML = warnings.length ? warnings.map(w => `<div class="hint bad-text">${esc(w)}</div>`).join("") : `<div class="hint ok-text">暂无预警</div>`;
+
+      const buckets = Array.from({ length: 20 }, () => ({ total: 0, failed: 0 }));
+      state.logs.slice().reverse().forEach((log, index) => {
+        const bucket = Math.min(19, Math.floor(index / Math.max(1, Math.ceil(Math.max(1, state.logs.length) / 20))));
+        buckets[bucket].total += 1;
+        if (!log.ok) buckets[bucket].failed += 1;
+      });
+      $("errorTrend").innerHTML = buckets.map(bucket => {
+        const rate = bucket.total ? bucket.failed / bucket.total : 0;
+        const height = Math.max(4, Math.round(rate * 48));
+        const cls = rate >= .3 ? "bad" : rate >= .15 ? "warn" : "";
+        return `<span class="${cls}" style="height:${height}px" title="${bucket.failed}/${bucket.total}"></span>`;
+      }).join("");
+
+      const counts = new Map();
+      state.logs.forEach(log => counts.set(log.model || "-", (counts.get(log.model || "-") || 0) + 1));
+      const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+      const max = Math.max(1, ...rows.map(([, count]) => count));
+      $("modelChart").innerHTML = rows.length ? rows.map(([model, count]) => `
+        <div class="bar-row">
+          <span class="bar-label" title="${esc(model)}">${esc(model)}</span>
+          <span class="bar-track"><span class="bar-fill" style="width:${Math.round((count / max) * 100)}%"></span></span>
+          <span class="bar-value">${count}</span>
+        </div>
+      `).join("") : `<div class="hint">暂无模型调用数据。</div>`;
+    }
+    function renderCurrentAccount() {
+      const accounts = state.status?.accounts || [];
+      const current = accounts.find(a => a.current);
+      if (!current) {
+        $("currentAccountPanel").innerHTML = "当前没有可用账户，请添加或启用账户。";
+        return;
+      }
+      const expiredText = current.expired ? "已过期，需要重新认证" : "认证状态正常";
+      const enabledText = current.enabled ? "启用" : "停用";
+      $("currentAccountPanel").innerHTML = `当前账户 #${current.id} ${esc(current.name || "未命名")}，${enabledText}，${expiredText}。调用 ${current.usage_count} 次，失败 ${current.failure_count} 次${current.last_used_at ? `，最近 ${esc(fmt(current.last_used_at))}` : ""}。`;
     }
     function renderAccounts(accounts) {
       $("accountList").innerHTML = accounts.length ? accounts.map(a => `
@@ -500,7 +632,7 @@
     }
     function renderLogs() {
       $("requestLogRows").innerHTML = state.logs.length ? state.logs.map(l => `
-        <tr><td>${esc(fmt(l.time))}</td><td class="${l.ok ? "ok-text" : "bad-text"}">${l.ok ? "成功" : "失败"}</td><td>#${l.account_id ?? "-"} ${esc(l.account_name || "")}</td><td>${esc(l.model || "-")}${l.stream ? " / stream" : ""}</td><td>${esc(l.endpoint)}</td><td>${esc(l.output_type || "-")}</td><td>${l.media_count || 0}</td><td>${l.duration_ms} ms</td><td>${esc(l.error || "")}</td></tr>
+        <tr><td>${esc(fmt(l.time))}</td><td class="${l.ok ? "ok-text" : "bad-text"}">${l.ok ? "成功" : "失败"}</td><td>#${l.account_id ?? "-"} ${esc(l.account_name || "")}</td><td title="${esc(l.model || "-")}">${esc(l.model || "-")}${l.stream ? " / stream" : ""}</td><td title="${esc(l.endpoint)}">${esc(l.endpoint)}</td><td>${esc(l.output_type || "-")}</td><td>${l.media_count || 0}</td><td>${l.duration_ms} ms</td><td class="error-cell">${esc(l.error || "")}</td></tr>
       `).join("") : `<tr><td colspan="9" class="hint">还没有请求日志。</td></tr>`;
     }
     function renderGems() {
@@ -557,11 +689,25 @@
         file_ids: state.files.map(f => f.id),
       };
     }
+    function mediaPrompt() {
+      const kind = $("mediaGenerateKind").value;
+      const text = $("mediaGeneratePrompt").value.trim();
+      const prefix = kind === "image" ? "生成图片：" : kind === "video" ? "生成视频：" : "生成音频/音乐：";
+      return `${prefix}${text}`;
+    }
+    async function mediaPayload() {
+      return {
+        prompt: mediaPrompt(),
+        model: $("mediaGenerateModel").value,
+        temporary: true,
+        deep_research: false,
+        file_ids: [],
+      };
+    }
 
     document.querySelectorAll("nav button").forEach(btn => btn.onclick = () => {
       document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b === btn));
       document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === btn.dataset.tab));
-      if (btn.dataset.tab === "native") refreshGems().catch(e => setMsg(e.message));
       if (btn.dataset.tab === "gems") refreshGems().catch(e => setMsg(e.message));
       if (btn.dataset.tab === "media") refreshMedia().catch(e => setMsg(e.message));
     });
@@ -590,6 +736,14 @@
         $("nativeOutput").textContent = text;
         await refreshAll();
       } catch (e) { showJson("nativeOutput", e.message); }
+    };
+    $("mediaGenerateBtn").onclick = async () => {
+      try {
+        if (!$("mediaGeneratePrompt").value.trim()) return setMsg("请输入媒体生成描述");
+        showJson("mediaGenerateOutput", await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await mediaPayload()) }));
+        await refreshMedia();
+        await refreshLogs();
+      } catch (e) { showJson("mediaGenerateOutput", e.message); }
     };
     $("uploadFileBtn").onclick = async () => {
       const file = $("nativeFile").files[0];

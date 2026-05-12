@@ -900,6 +900,7 @@ def create_app(config: ServerConfig | None = None):
             gems = await rotator.run(
                 operation,
                 count_usage=False,
+                count_failure=False,
                 endpoint="/v1/gemini/gems",
                 output_type="gems",
             )

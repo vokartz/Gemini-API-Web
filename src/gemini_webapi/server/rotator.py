@@ -103,6 +103,7 @@ class AccountRotator:
         operation: Callable[[GeminiClient], Awaitable[T]],
         *,
         count_usage: bool = True,
+        count_failure: bool = True,
         endpoint: str = "",
         model: str = "",
         output_type: str | None = None,
@@ -118,7 +119,10 @@ class AccountRotator:
         try:
             result = await operation(slot.client)
         except Exception as exc:
-            await self._handle_failure(slot.account.id, exc)
+            if getattr(slot.client, "client", None) is None:
+                slot.initialized = False
+            if count_failure:
+                await self._handle_failure(slot.account.id, exc)
             self._append_request_log(
                 account=slot.account,
                 endpoint=endpoint,
@@ -153,6 +157,7 @@ class AccountRotator:
         operation: Callable[[GeminiClient], Any],
         *,
         count_usage: bool = True,
+        count_failure: bool = True,
         endpoint: str = "",
         model: str = "",
         output_type: str | None = None,
@@ -169,7 +174,10 @@ class AccountRotator:
             async for item in operation(slot.client):
                 yield item
         except Exception as exc:
-            await self._handle_failure(slot.account.id, exc)
+            if getattr(slot.client, "client", None) is None:
+                slot.initialized = False
+            if count_failure:
+                await self._handle_failure(slot.account.id, exc)
             self._append_request_log(
                 account=slot.account,
                 endpoint=endpoint,
@@ -230,7 +238,7 @@ class AccountRotator:
             slot = ClientSlot(account=account, client=client)
             self._slots[account.id] = slot
 
-        if not slot.initialized:
+        if not slot.initialized or getattr(slot.client, "client", None) is None:
             await slot.client.init(
                 timeout=self.request_timeout,
                 auto_refresh=self.auto_refresh,
