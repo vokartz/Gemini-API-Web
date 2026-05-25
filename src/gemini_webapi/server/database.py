@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,14 +67,27 @@ class RequestLog:
 @dataclass(frozen=True)
 class MediaOutput:
     id: int
+    token: str | None
     request_id: str | None
     account_id: int | None
     kind: str
     title: str | None
     url: str
     thumbnail: str | None
+    local_path: str | None
+    local_content_type: str | None
+    local_size: int | None
     metadata: dict[str, Any]
     created_at: str
+
+
+@dataclass(frozen=True)
+class MediaCooldown:
+    account_id: int
+    kind: str
+    reason: str | None
+    blocked_until: str
+    updated_at: str
 
 
 @dataclass(frozen=True)
@@ -186,18 +200,31 @@ class AccountStore:
 
             CREATE TABLE IF NOT EXISTS media_outputs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token TEXT,
                 request_id TEXT,
                 account_id INTEGER,
                 kind TEXT NOT NULL,
                 title TEXT,
                 url TEXT NOT NULL,
                 thumbnail TEXT,
+                local_path TEXT,
+                local_content_type TEXT,
+                local_size INTEGER,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_media_outputs_created
             ON media_outputs(created_at);
+
+            CREATE TABLE IF NOT EXISTS media_cooldowns (
+                account_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                reason TEXT,
+                blocked_until TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (account_id, kind)
+            );
 
             CREATE TABLE IF NOT EXISTS gems_cache (
                 id TEXT PRIMARY KEY,
@@ -221,12 +248,30 @@ class AccountStore:
         self._ensure_column("accounts", "validation_status", "TEXT")
         self._ensure_column("accounts", "validation_message", "TEXT")
         self._ensure_column("accounts", "validated_at", "TEXT")
+        self._ensure_column("media_outputs", "token", "TEXT")
+        self._ensure_column("media_outputs", "local_path", "TEXT")
+        self._ensure_column("media_outputs", "local_content_type", "TEXT")
+        self._ensure_column("media_outputs", "local_size", "INTEGER")
+        self._ensure_media_tokens()
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
         if column not in {row["name"] for row in rows}:
             self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _ensure_media_tokens(self) -> None:
+        rows = self.conn.execute(
+            "SELECT id FROM media_outputs WHERE token IS NULL OR token = ''"
+        ).fetchall()
+        for row in rows:
+            self.conn.execute(
+                "UPDATE media_outputs SET token = ? WHERE id = ?",
+                (uuid.uuid4().hex, row["id"]),
+            )
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_media_outputs_token ON media_outputs(token)"
+        )
 
     def import_accounts_file(self, path: str | Path | None) -> int:
         if path is None:
@@ -576,6 +621,11 @@ class AccountStore:
         ).fetchall()
         return [self._row_to_request_log(row) for row in rows]
 
+    def delete_request_log(self, log_id: int) -> bool:
+        cursor = self.conn.execute("DELETE FROM request_logs WHERE id = ?", (log_id,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
     def upsert_job(
         self,
         *,
@@ -649,23 +699,31 @@ class AccountStore:
         url: str,
         title: str | None = None,
         thumbnail: str | None = None,
+        local_path: str | None = None,
+        local_content_type: str | None = None,
+        local_size: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> int:
+        token = uuid.uuid4().hex
         cursor = self.conn.execute(
             """
             INSERT INTO media_outputs (
-                request_id, account_id, kind, title, url, thumbnail,
-                metadata_json, created_at
+                token, request_id, account_id, kind, title, url, thumbnail,
+                local_path, local_content_type, local_size, metadata_json, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                token,
                 request_id,
                 account_id,
                 kind,
                 title,
                 url,
                 thumbnail,
+                local_path,
+                local_content_type,
+                local_size,
                 json.dumps(metadata or {}, ensure_ascii=True, sort_keys=True),
                 utc_now(),
             ),
@@ -687,6 +745,66 @@ class AccountStore:
                 (max(1, int(limit)),),
             ).fetchall()
         return [self._row_to_media_output(row) for row in rows]
+
+    def get_media_output_by_token(self, token: str) -> MediaOutput | None:
+        row = self.conn.execute(
+            "SELECT * FROM media_outputs WHERE token = ?", (token,)
+        ).fetchone()
+        return self._row_to_media_output(row) if row else None
+
+    def set_media_cooldown(
+        self,
+        *,
+        account_id: int,
+        kind: str,
+        blocked_until: str,
+        reason: str | None = None,
+    ) -> None:
+        now = utc_now()
+        self.conn.execute(
+            """
+            INSERT INTO media_cooldowns (
+                account_id, kind, reason, blocked_until, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(account_id, kind) DO UPDATE SET
+                reason = excluded.reason,
+                blocked_until = excluded.blocked_until,
+                updated_at = excluded.updated_at
+            """,
+            (account_id, kind, reason, blocked_until, now),
+        )
+        self.conn.commit()
+
+    def clear_media_cooldown(self, account_id: int, kind: str) -> bool:
+        cursor = self.conn.execute(
+            "DELETE FROM media_cooldowns WHERE account_id = ? AND kind = ?",
+            (account_id, kind),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def get_media_cooldown(self, account_id: int, kind: str) -> MediaCooldown | None:
+        row = self.conn.execute(
+            """
+            SELECT * FROM media_cooldowns
+            WHERE account_id = ? AND kind = ?
+            """,
+            (account_id, kind),
+        ).fetchone()
+        return self._row_to_media_cooldown(row) if row else None
+
+    def list_media_cooldowns(self, kind: str | None = None) -> list[MediaCooldown]:
+        if kind:
+            rows = self.conn.execute(
+                "SELECT * FROM media_cooldowns WHERE kind = ? ORDER BY updated_at DESC",
+                (kind,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM media_cooldowns ORDER BY updated_at DESC"
+            ).fetchall()
+        return [self._row_to_media_cooldown(row) for row in rows]
 
     def replace_gems_cache(self, gems: list[dict[str, Any]]) -> None:
         now = utc_now()
@@ -785,14 +903,27 @@ class AccountStore:
     def _row_to_media_output(self, row: sqlite3.Row) -> MediaOutput:
         return MediaOutput(
             id=int(row["id"]),
+            token=row["token"],
             request_id=row["request_id"],
             account_id=row["account_id"],
             kind=row["kind"],
             title=row["title"],
             url=row["url"],
             thumbnail=row["thumbnail"],
+            local_path=row["local_path"],
+            local_content_type=row["local_content_type"],
+            local_size=row["local_size"],
             metadata=json.loads(row["metadata_json"] or "{}"),
             created_at=row["created_at"],
+        )
+
+    def _row_to_media_cooldown(self, row: sqlite3.Row) -> MediaCooldown:
+        return MediaCooldown(
+            account_id=int(row["account_id"]),
+            kind=row["kind"],
+            reason=row["reason"],
+            blocked_until=row["blocked_until"],
+            updated_at=row["updated_at"],
         )
 
     def _row_to_job(self, row: sqlite3.Row) -> JobRecord:

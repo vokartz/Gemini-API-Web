@@ -1,18 +1,28 @@
 from __future__ import annotations
 
+import mimetypes
 import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlparse
 
 import orjson as json
+from curl_cffi.requests import AsyncSession
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..constants import Model
-from ..exceptions import AuthError, GeminiError, ModelInvalid
+from ..exceptions import (
+    AuthError,
+    GeminiError,
+    MediaGenerationTemporarilyUnavailable,
+    ModelInvalid,
+    VideoGenerationFailed,
+    VideoGenerationNotSubmitted,
+)
 from ..types import DeepResearchPlan
 from .auth_browser import AuthBrowserManager, AuthBrowserUnavailable
 from .config import ServerConfig
@@ -20,15 +30,27 @@ from .database import AccountStore
 from .rotator import AccountRotator
 
 
+MEDIA_CONTENT_MAX_BYTES = 100 * 1024 * 1024
+MEDIA_CONTENT_ALLOWED_HOST_SUFFIXES = (
+    ".google.com",
+    ".googleusercontent.com",
+    ".gstatic.com",
+    ".googlevideo.com",
+    "storage.googleapis.com",
+)
+
+
 class GenerateRequest(BaseModel):
     prompt: str
     model: str | None = None
+    mode: str | None = None
     temporary: bool = False
 
 
 class GeminiGenerateRequest(BaseModel):
     prompt: str
     model: str | None = None
+    mode: str | None = None
     temporary: bool = False
     gem: str | None = None
     gem_id: str | None = None
@@ -135,11 +157,28 @@ class ChatCompletionRequest(BaseModel):
 
 
 MODEL_ALIASES = {
-    "gemini": "gemini-3-pro",
-    "gemini-3.1-pro": "gemini-3-pro",
-    "gemini-3-pro-preview": "gemini-3-pro",
-    "gemini-3.1-pro-preview": "gemini-3-pro",
-    "gemini-3-flash-preview": "gemini-3-flash",
+    "gemini": "gemini-3.1-pro",
+}
+
+PUBLIC_MODEL_IDS = {
+    "gemini-3.1-pro",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+}
+
+PUBLIC_MODEL_ORDER = [
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.1-pro",
+]
+
+REMOVED_MODEL_IDS = {
+    "gemini-3-pro",
+    "gemini-3-pro-preview",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash",
+    "gemini-3-flash-preview",
+    "gemini-3-flash-thinking",
 }
 
 
@@ -385,9 +424,7 @@ def _chat_tool_calls_chunk(
 def _openai_model_ids() -> list[str]:
     return [
         "gemini",
-        "gemini-3.1-pro",
-        "gemini-3-flash",
-        "gemini-3-flash-thinking",
+        *PUBLIC_MODEL_ORDER,
     ]
 
 
@@ -397,7 +434,25 @@ def _resolve_model_arg(model: str | None) -> str | None:
     model_key = model.lower()
     if model_key == "unspecified":
         return None
-    return MODEL_ALIASES.get(model_key, model)
+    if model_key in REMOVED_MODEL_IDS:
+        raise ValueError(
+            f"Model '{model}' is no longer exposed. Use gemini-3.1-pro, gemini-3.5-flash, or gemini-3.1-flash-lite."
+        )
+    resolved = MODEL_ALIASES.get(model_key, model_key)
+    if resolved not in PUBLIC_MODEL_IDS:
+        raise ValueError(
+            f"Unsupported model '{model}'. Use gemini, gemini-3.1-pro, gemini-3.5-flash, or gemini-3.1-flash-lite."
+        )
+    return resolved
+
+
+def _generation_mode_arg(mode: str | None) -> str | None:
+    normalized = (mode or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized not in {"image", "video", "audio"}:
+        raise ValueError("mode must be one of: image, video, audio.")
+    return normalized
 
 
 def _error_status(exc: Exception) -> int:
@@ -405,6 +460,12 @@ def _error_status(exc: Exception) -> int:
         return 401
     if isinstance(exc, (ValueError, ModelInvalid)):
         return 400
+    if isinstance(exc, VideoGenerationNotSubmitted):
+        return 409
+    if isinstance(exc, VideoGenerationFailed):
+        return 502
+    if isinstance(exc, MediaGenerationTemporarilyUnavailable):
+        return 429
     if isinstance(exc, GeminiError):
         return 502
     return 500
@@ -515,6 +576,40 @@ def _media_entries(output: Any) -> list[dict[str, Any]]:
     entries.extend(classified["media"])
     entries.extend(classified["web_images"])
     return [entry for entry in entries if entry.get("url")]
+
+
+def _media_record_dict(item: Any) -> dict[str, Any]:
+    data = item.__dict__.copy()
+    if "token" not in data and hasattr(item, "token"):
+        data["token"] = getattr(item, "token")
+    if data.get("token"):
+        data["content_url"] = f"/v1/gemini/media/{data['token']}/content"
+        data["cached"] = bool(data.get("local_path"))
+    return data
+
+
+def _media_host_allowed(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    return any(
+        host == suffix or host.endswith(suffix)
+        for suffix in MEDIA_CONTENT_ALLOWED_HOST_SUFFIXES
+    )
+
+
+def _media_content_type_allowed(kind: str | None, content_type: str | None) -> bool:
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if not media_type:
+        return True
+    if kind in {"image", "web_image"}:
+        return media_type.startswith("image/")
+    if kind == "video":
+        return media_type.startswith("video/")
+    if kind == "audio":
+        return media_type.startswith("audio/")
+    return media_type.startswith(("image/", "video/", "audio/"))
 
 
 def _job_dict(job: Any) -> dict[str, Any]:
@@ -675,12 +770,44 @@ def create_app(config: ServerConfig | None = None):
     async def gemini_media(limit: int = 80, kind: str | None = None) -> dict[str, Any]:
         return {
             "media": [
-                item.__dict__
+                _media_record_dict(item)
                 for item in store.list_media_outputs(
                     limit=max(1, min(limit, 500)), kind=kind
                 )
             ]
         }
+
+    @app.get("/v1/gemini/media/{media_token}/content")
+    async def gemini_media_content(media_token: str) -> Response:
+        item = store.get_media_output_by_token(media_token)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Media not found.")
+        if item.local_path:
+            local_path = Path(item.local_path)
+            if local_path.is_file():
+                return FileResponse(
+                    local_path,
+                    media_type=item.local_content_type or "application/octet-stream",
+                )
+        if not _media_host_allowed(item.url):
+            raise HTTPException(status_code=400, detail="Media host is not allowed.")
+        account = store.get_account(item.account_id) if item.account_id else None
+        cookies = account.cookies if account else None
+        async with AsyncSession(timeout=120) as client:
+            response = await client.get(item.url, allow_redirects=True, cookies=cookies)
+        content_type = response.headers.get("content-type") or "application/octet-stream"
+        if not _media_content_type_allowed(item.kind, content_type):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Media source returned {content_type}, not {item.kind} content.",
+            )
+        content = response.content
+        if len(content) > MEDIA_CONTENT_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Media file is too large.")
+        return Response(
+            content=content,
+            media_type=content_type,
+        )
 
     @app.get("/v1/gemini/jobs")
     async def gemini_jobs(limit: int = 80, job_type: str | None = None) -> dict[str, Any]:
@@ -739,6 +866,53 @@ def create_app(config: ServerConfig | None = None):
             paths.append(record.path)
         return paths
 
+    def _media_file_suffix(kind: str, content_type: str | None, url: str) -> str:
+        media_type = (content_type or "").split(";", 1)[0].strip()
+        suffix = mimetypes.guess_extension(media_type) if media_type else None
+        if suffix:
+            return suffix
+        parsed_suffix = Path(urlparse(url).path).suffix
+        if parsed_suffix:
+            return parsed_suffix[:16]
+        return {
+            "image": ".png",
+            "web_image": ".png",
+            "video": ".mp4",
+            "audio": ".mp3",
+        }.get(kind, ".bin")
+
+    def _cache_media_item(item: dict[str, Any]) -> dict[str, Any]:
+        url = item.get("url") or ""
+        if not url or not _media_host_allowed(url):
+            return {}
+        try:
+            account = store.get_account(rotator.status()["current_account_id"])
+            cookies = account.cookies if account else None
+            with httpx.Client(timeout=120, follow_redirects=True, cookies=cookies) as client:
+                with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type")
+                    if not _media_content_type_allowed(item.get("kind"), content_type):
+                        return {}
+                    suffix = _media_file_suffix(item.get("kind", "media"), content_type, url)
+                    cache_dir = Path(config.database_path).resolve().parent / "media-cache"
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    dest = cache_dir / f"{uuid.uuid4().hex}{suffix}"
+                    size = 0
+                    with dest.open("wb") as fh:
+                        for chunk in response.iter_bytes():
+                            if not chunk:
+                                continue
+                            size += len(chunk)
+                            if size > MEDIA_CONTENT_MAX_BYTES:
+                                fh.close()
+                                dest.unlink(missing_ok=True)
+                                return {}
+                            fh.write(chunk)
+            return {"path": str(dest), "content_type": content_type, "size": size}
+        except Exception:
+            return {}
+
     def _save_media_index(
         *,
         request_id: str,
@@ -747,6 +921,7 @@ def create_app(config: ServerConfig | None = None):
     ) -> int:
         count = 0
         for item in _media_entries(output):
+            cache = _cache_media_item(item)
             store.add_media_output(
                 request_id=request_id,
                 account_id=account_id,
@@ -754,6 +929,9 @@ def create_app(config: ServerConfig | None = None):
                 title=item.get("title"),
                 url=item["url"],
                 thumbnail=item.get("thumbnail"),
+                local_path=cache.get("path"),
+                local_content_type=cache.get("content_type"),
+                local_size=cache.get("size"),
                 metadata=item,
             )
             count += 1
@@ -762,6 +940,7 @@ def create_app(config: ServerConfig | None = None):
     @app.post("/v1/gemini/generate")
     async def gemini_generate(request: GeminiGenerateRequest) -> dict[str, Any]:
         request_id = f"req-{uuid.uuid4().hex}"
+        generation_mode = _generation_mode_arg(request.mode)
 
         async def operation(client):
             kwargs: dict[str, Any] = {
@@ -771,6 +950,8 @@ def create_app(config: ServerConfig | None = None):
             resolved_model = _resolve_model_arg(request.model)
             if resolved_model:
                 kwargs["model"] = resolved_model
+            if generation_mode:
+                kwargs["generation_mode"] = generation_mode
             gem_arg = await _gem_arg(client, request)
             if gem_arg:
                 kwargs["gem"] = gem_arg
@@ -784,7 +965,9 @@ def create_app(config: ServerConfig | None = None):
                 operation,
                 endpoint="/v1/gemini/generate",
                 model=request.model or "gemini",
-                output_type="gemini_native",
+                output_type=f"gemini_{request.mode or 'native'}",
+                require_video_generation=request.mode == "video",
+                media_generation_mode=generation_mode,
             )
         except Exception as exc:
             raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
@@ -826,6 +1009,7 @@ def create_app(config: ServerConfig | None = None):
     @app.post("/v1/gemini/stream")
     async def gemini_stream(request: GeminiGenerateRequest):
         request_id = f"req-{uuid.uuid4().hex}"
+        generation_mode = _generation_mode_arg(request.mode)
 
         async def event_stream():
             final_output = None
@@ -838,6 +1022,8 @@ def create_app(config: ServerConfig | None = None):
                 resolved_model = _resolve_model_arg(request.model)
                 if resolved_model:
                     kwargs["model"] = resolved_model
+                if generation_mode:
+                    kwargs["generation_mode"] = generation_mode
                 gem_arg = await _gem_arg(client, request)
                 if gem_arg:
                     kwargs["gem"] = gem_arg
@@ -852,7 +1038,9 @@ def create_app(config: ServerConfig | None = None):
                     operation,
                     endpoint="/v1/gemini/stream",
                     model=request.model or "gemini",
-                    output_type="gemini_native",
+                    output_type=f"gemini_{request.mode or 'native'}",
+                    require_video_generation=request.mode == "video",
+                    media_generation_mode=generation_mode,
                 ):
                     final_output = output
                     chunk = {
@@ -1298,11 +1486,15 @@ def create_app(config: ServerConfig | None = None):
 
     @app.post("/v1/generate")
     async def generate(request: GenerateRequest) -> dict[str, Any]:
+        generation_mode = _generation_mode_arg(request.mode)
+
         async def operation(client):
             kwargs: dict[str, Any] = {"temporary": request.temporary}
             resolved_model = _resolve_model_arg(request.model)
             if resolved_model:
                 kwargs["model"] = resolved_model
+            if generation_mode:
+                kwargs["generation_mode"] = generation_mode
             return await client.generate_content(request.prompt, **kwargs)
 
         try:
@@ -1310,6 +1502,9 @@ def create_app(config: ServerConfig | None = None):
                 operation,
                 endpoint="/v1/generate",
                 model=request.model or "gemini",
+                output_type=f"gemini_{request.mode or 'native'}",
+                require_video_generation=request.mode == "video",
+                media_generation_mode=generation_mode,
             )
         except Exception as exc:
             raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc

@@ -95,49 +95,19 @@ class Headers(Enum):
 class Model(Enum):
     UNSPECIFIED = ("unspecified", {}, False)
     BASIC_PRO = (
-        "gemini-3-pro",
+        "gemini-3.1-pro",
         build_model_header("9d8ca3786ebdfbea", 1),
         False,
     )
     BASIC_FLASH = (
-        "gemini-3-flash",
+        "gemini-3.5-flash",
         build_model_header("fbb127bbb056c959", 1),
         False,
     )
     BASIC_THINKING = (
-        "gemini-3-flash-thinking",
+        "gemini-3.1-flash-lite",
         build_model_header("5bf011840784117a", 1),
         False,
-    )
-    PLUS_PRO = (
-        "gemini-3-pro-plus",
-        build_model_header("e6fa609c3fa255c0", 4),
-        True,
-    )
-    PLUS_FLASH = (
-        "gemini-3-flash-plus",
-        build_model_header("56fdd199312815e2", 4),
-        True,
-    )
-    PLUS_THINKING = (
-        "gemini-3-flash-thinking-plus",
-        build_model_header("e051ce1aa80aa576", 4),
-        True,
-    )
-    ADVANCED_PRO = (
-        "gemini-3-pro-advanced",
-        build_model_header("e6fa609c3fa255c0", 2),
-        True,
-    )
-    ADVANCED_FLASH = (
-        "gemini-3-flash-advanced",
-        build_model_header("56fdd199312815e2", 2),
-        True,
-    )
-    ADVANCED_THINKING = (
-        "gemini-3-flash-thinking-advanced",
-        build_model_header("e051ce1aa80aa576", 2),
-        True,
     )
 
     def __init__(self, name, header, advanced_only):

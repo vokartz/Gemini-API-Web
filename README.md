@@ -28,10 +28,10 @@ docker compose up -d --build
 http://localhost:7860
 ```
 
-授权浏览器 noVNC：
+授权浏览器通过管理端的“网页授权”按钮打开。noVNC/websockify 会在授权会话启动后临时运行，管理端会返回可访问的授权链接，通常是：
 
 ```text
-http://localhost:6080/vnc.html
+http://localhost:7860/novnc/vnc.html
 ```
 
 默认数据目录是本机 `./data`，容器内映射为 `/app/data`。SQLite 数据库默认保存到：
@@ -139,12 +139,12 @@ curl http://localhost:7860/v1/chat/completions \
   }'
 ```
 
-常用模型别名：
+常用模型：
 
 - `gemini`：默认映射到 Gemini 3.1 Pro。
-- `gemini-3.1-pro`：Pro。
-- `gemini-3-flash`：快速。
-- `gemini-3-flash-thinking`：思考。
+- `gemini-3.1-pro`：真实模型名，原样传给 Gemini。
+- `gemini-3.5-flash`：快速模型。
+- `gemini-3.1-flash-lite`：轻量快速模型。
 
 ## Gemini 原生接口
 

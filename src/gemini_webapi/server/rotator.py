@@ -2,17 +2,37 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, TypeVar
 
 from curl_cffi.requests.exceptions import HTTPError
 
 from ..client import GeminiClient
 from ..constants import AccountStatus
-from ..exceptions import AuthError, TemporarilyBlocked, UsageLimitExceeded
+from ..exceptions import (
+    AuthError,
+    MediaGenerationTemporarilyUnavailable,
+    TemporarilyBlocked,
+    UsageLimitExceeded,
+    VideoGenerationFailed,
+    VideoGenerationNotSubmitted,
+)
 from .database import Account, AccountStore
 
 T = TypeVar("T")
+MEDIA_GENERATION_MODES = {"image", "video"}
+MEDIA_LIMIT_COOLDOWN_SECONDS = 24 * 60 * 60
+MEDIA_LIMIT_ERROR_MARKERS = (
+    "limit",
+    "quota",
+    "exceeded",
+    "too many",
+    "usage limit",
+    "limit reached",
+    "额度",
+    "上限",
+    "次数",
+)
 
 
 @dataclass
@@ -70,6 +90,7 @@ class AccountRotator:
                     "validation_status": account.validation_status,
                     "validation_message": account.validation_message,
                     "validated_at": account.validated_at,
+                    "media_cooldowns": self._account_media_cooldowns(account.id),
                     "current": account.id == current_id,
                 }
                 for account in accounts
@@ -138,17 +159,39 @@ class AccountRotator:
         job_id: str | None = None,
         media_count: int = 0,
         deep_research_state: str | None = None,
+        require_video_generation: bool = False,
+        media_generation_mode: str | None = None,
     ) -> T:
         attempts = max(1, len(self.store.get_active_accounts()))
         last_exc: Exception | None = None
+        media_generation_mode = self._normalize_media_generation_mode(
+            media_generation_mode,
+            require_video_generation=require_video_generation,
+        )
+        skipped_media_cooldowns: dict[int, str] = {}
         for _ in range(attempts):
             started = datetime.now(timezone.utc)
             account: Account | None = None
+            media_attempt_log_id: int | None = None
             try:
                 async with self._lock:
-                    account = self._select_current_account()
+                    account = self._select_current_account(
+                        media_generation_mode=media_generation_mode,
+                        skipped_media_cooldowns=skipped_media_cooldowns,
+                    )
                     slot = await self._get_slot(account)
-                break
+                    if media_generation_mode in MEDIA_GENERATION_MODES:
+                        media_attempt_log_id = self._append_request_log(
+                            account=account,
+                            endpoint=endpoint,
+                            model=model,
+                            ok=True,
+                            started=started,
+                            output_type=f"{media_generation_mode}_generation_attempt",
+                            job_id=job_id,
+                            media_count=media_count,
+                            deep_research_state=deep_research_state,
+                        )
             except Exception as exc:
                 last_exc = exc
                 if count_failure and account is not None:
@@ -166,17 +209,24 @@ class AccountRotator:
                         deep_research_state=deep_research_state,
                     )
                 continue
-        else:
-            raise last_exc or AuthError("No active Gemini accounts are available. Re-authenticate or enable a valid account.")
 
-        started = datetime.now(timezone.utc)
-        while True:
+            started = datetime.now(timezone.utc)
             try:
                 result = await operation(slot.client)
-                break
             except Exception as exc:
+                last_exc = exc
                 if getattr(slot.client, "client", None) is None:
                     slot.initialized = False
+                media_limit_error = bool(
+                    media_generation_mode and self._is_media_limit_error(exc)
+                )
+                if isinstance(exc, (VideoGenerationFailed, VideoGenerationNotSubmitted)) and media_attempt_log_id:
+                    self.store.delete_request_log(media_attempt_log_id)
+                    media_attempt_log_id = None
+                    if not media_limit_error:
+                        raise
+                if media_limit_error:
+                    self._set_media_cooldown(slot.account.id, media_generation_mode, str(exc))
                 if count_failure:
                     await self._handle_failure(slot.account.id, exc)
                 self._append_request_log(
@@ -191,22 +241,26 @@ class AccountRotator:
                     media_count=media_count,
                     deep_research_state=deep_research_state,
                 )
+                if media_limit_error:
+                    continue
                 raise
 
-        if count_usage:
-            await self._handle_success(slot.account.id)
-        self._append_request_log(
-            account=slot.account,
-            endpoint=endpoint,
-            model=model,
-            ok=True,
-            started=started,
-            output_type=output_type,
-            job_id=job_id,
-            media_count=media_count,
-            deep_research_state=deep_research_state,
-        )
-        return result
+            if count_usage:
+                await self._handle_success(slot.account.id)
+            self._append_request_log(
+                account=slot.account,
+                endpoint=endpoint,
+                model=model,
+                ok=True,
+                started=started,
+                output_type=output_type,
+                job_id=job_id,
+                media_count=media_count,
+                deep_research_state=deep_research_state,
+            )
+            return result
+
+        raise last_exc or AuthError("No active Gemini accounts are available. Re-authenticate or enable a valid account.")
 
     async def run_stream(
         self,
@@ -220,16 +274,39 @@ class AccountRotator:
         job_id: str | None = None,
         media_count: int = 0,
         deep_research_state: str | None = None,
+        require_video_generation: bool = False,
+        media_generation_mode: str | None = None,
     ):
         attempts = max(1, len(self.store.get_active_accounts()))
         last_exc: Exception | None = None
+        media_generation_mode = self._normalize_media_generation_mode(
+            media_generation_mode,
+            require_video_generation=require_video_generation,
+        )
+        media_attempt_log_id: int | None = None
+        skipped_media_cooldowns: dict[int, str] = {}
         for _ in range(attempts):
             started = datetime.now(timezone.utc)
             account: Account | None = None
             try:
                 async with self._lock:
-                    account = self._select_current_account()
+                    account = self._select_current_account(
+                        media_generation_mode=media_generation_mode,
+                        skipped_media_cooldowns=skipped_media_cooldowns,
+                    )
                     slot = await self._get_slot(account)
+                    if media_generation_mode in MEDIA_GENERATION_MODES:
+                        media_attempt_log_id = self._append_request_log(
+                            account=account,
+                            endpoint=endpoint,
+                            model=model,
+                            ok=True,
+                            started=started,
+                            output_type=f"{media_generation_mode}_generation_attempt",
+                            job_id=job_id,
+                            media_count=media_count,
+                            deep_research_state=deep_research_state,
+                        )
                 break
             except Exception as exc:
                 last_exc = exc
@@ -258,6 +335,16 @@ class AccountRotator:
         except Exception as exc:
             if getattr(slot.client, "client", None) is None:
                 slot.initialized = False
+            media_limit_error = bool(
+                media_generation_mode and self._is_media_limit_error(exc)
+            )
+            if isinstance(exc, (VideoGenerationFailed, VideoGenerationNotSubmitted)) and media_attempt_log_id:
+                self.store.delete_request_log(media_attempt_log_id)
+                media_attempt_log_id = None
+                if not media_limit_error:
+                    raise
+            if media_limit_error:
+                self._set_media_cooldown(slot.account.id, media_generation_mode, str(exc))
             if count_failure:
                 await self._handle_failure(slot.account.id, exc)
             self._append_request_log(
@@ -289,18 +376,68 @@ class AccountRotator:
             deep_research_state=deep_research_state,
         )
 
-    def _select_current_account(self) -> Account:
+    def _select_current_account(
+        self,
+        *,
+        media_generation_mode: str | None = None,
+        skipped_media_cooldowns: dict[int, str] | None = None,
+    ) -> Account:
         active = self.store.get_active_accounts()
         if not active:
             raise AuthError("No active Gemini accounts are available. Re-authenticate or enable a valid account.")
 
         current_id = self._current_account_id()
+        if media_generation_mode in MEDIA_GENERATION_MODES:
+            account = self._first_media_available_account(
+                active,
+                media_generation_mode,
+                current_id=current_id,
+                skipped_media_cooldowns=skipped_media_cooldowns,
+            )
+            self._set_current_account_id(account.id)
+            return account
+
         if current_id is not None and any(account.id == current_id for account in active):
             return next(account for account in active if account.id == current_id)
 
         account = active[0]
         self._set_current_account_id(account.id)
         return account
+
+    def _first_media_available_account(
+        self,
+        active: list[Account],
+        kind: str,
+        *,
+        current_id: int | None,
+        skipped_media_cooldowns: dict[int, str] | None = None,
+    ) -> Account:
+        skipped_media_cooldowns = skipped_media_cooldowns if skipped_media_cooldowns is not None else {}
+        ordered = self._ordered_accounts(active, current_id)
+        for account in ordered:
+            cooldown = self.store.get_media_cooldown(account.id, kind)
+            if cooldown is None:
+                return account
+            if self._cooldown_is_active(cooldown.blocked_until):
+                skipped_media_cooldowns[account.id] = cooldown.blocked_until
+                continue
+            self.store.clear_media_cooldown(account.id, kind)
+            return account
+
+        blocked_until = max(skipped_media_cooldowns.values()) if skipped_media_cooldowns else "unknown"
+        raise MediaGenerationTemporarilyUnavailable(
+            f"All Gemini accounts are temporarily blocked for {kind} generation until {blocked_until}."
+        )
+
+    @staticmethod
+    def _ordered_accounts(active: list[Account], current_id: int | None) -> list[Account]:
+        if current_id is None:
+            return active
+        ids = [account.id for account in active]
+        if current_id not in ids:
+            return active
+        index = ids.index(current_id)
+        return active[index:] + active[:index]
 
     async def _get_slot(self, account: Account) -> ClientSlot:
         slot = self._slots.get(account.id)
@@ -451,6 +588,45 @@ class AccountRotator:
             status = getattr(response, "status_code", status)
         return isinstance(status, int) and status in self.immediate_switch_status_codes
 
+    @staticmethod
+    def _normalize_media_generation_mode(
+        media_generation_mode: str | None,
+        *,
+        require_video_generation: bool,
+    ) -> str | None:
+        if require_video_generation:
+            return "video"
+        normalized = (media_generation_mode or "").strip().lower()
+        return normalized if normalized in MEDIA_GENERATION_MODES else None
+
+    @staticmethod
+    def _cooldown_is_active(blocked_until: str) -> bool:
+        try:
+            value = datetime.fromisoformat(blocked_until.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return value > datetime.now(timezone.utc)
+
+    def _set_media_cooldown(self, account_id: int, kind: str, reason: str) -> None:
+        blocked_until = (
+            datetime.now(timezone.utc) + timedelta(seconds=MEDIA_LIMIT_COOLDOWN_SECONDS)
+        ).isoformat().replace("+00:00", "Z")
+        self.store.set_media_cooldown(
+            account_id=account_id,
+            kind=kind,
+            blocked_until=blocked_until,
+            reason=reason[:500],
+        )
+
+    @staticmethod
+    def _is_media_limit_error(exc: Exception) -> bool:
+        if isinstance(exc, UsageLimitExceeded):
+            return True
+        if isinstance(exc, VideoGenerationNotSubmitted):
+            return False
+        message = str(exc).lower()
+        return any(marker in message for marker in MEDIA_LIMIT_ERROR_MARKERS)
+
     def _current_account_id(self) -> int | None:
         raw = self.store.get_state("current_account_id")
         if raw is None:
@@ -477,9 +653,9 @@ class AccountRotator:
         job_id: str | None = None,
         media_count: int = 0,
         deep_research_state: str | None = None,
-    ) -> None:
+    ) -> int:
         ended = datetime.now(timezone.utc)
-        self.store.add_request_log(
+        return self.store.add_request_log(
             time=ended.isoformat().replace("+00:00", "Z"),
             duration_ms=int((ended - started).total_seconds() * 1000),
             account_id=account.id,
@@ -494,3 +670,18 @@ class AccountRotator:
             deep_research_state=deep_research_state,
             error=error,
         )
+
+    def _account_media_cooldowns(self, account_id: int) -> dict[str, dict[str, str]]:
+        cooldowns: dict[str, dict[str, str]] = {}
+        for kind in sorted(MEDIA_GENERATION_MODES):
+            cooldown = self.store.get_media_cooldown(account_id, kind)
+            if cooldown is None:
+                continue
+            if not self._cooldown_is_active(cooldown.blocked_until):
+                self.store.clear_media_cooldown(account_id, kind)
+                continue
+            cooldowns[kind] = {
+                "blocked_until": cooldown.blocked_until,
+                "reason": cooldown.reason or "",
+            }
+        return cooldowns

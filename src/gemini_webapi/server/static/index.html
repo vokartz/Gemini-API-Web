@@ -42,7 +42,7 @@
     h1 { margin: 0; font-size: 18px; font-weight: 750; }
     h2 { margin: 0; font-size: 15px; }
     h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
-    main { padding: 16px; display: grid; gap: 16px; }
+    main { padding: 14px 16px; display: grid; gap: 14px; }
     nav {
       display: flex;
       flex-wrap: wrap;
@@ -52,6 +52,7 @@
       border-radius: 8px;
       background: var(--panel);
     }
+    nav button { flex: 0 0 auto; }
     nav button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     section {
       background: var(--panel);
@@ -60,31 +61,55 @@
       overflow: hidden;
     }
     .section-head {
-      min-height: 50px;
-      padding: 12px 14px;
+      min-height: 48px;
+      padding: 11px 14px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 12px;
       border-bottom: 1px solid var(--line);
     }
-    .content { padding: 14px; }
-    .grid { display: grid; grid-template-columns: minmax(340px, 430px) minmax(0, 1fr); gap: 16px; }
-    .cards { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 10px; }
+    .content { padding: 13px 14px; min-width: 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(300px, 430px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+      min-width: 0;
+    }
+    .grid > *, .split > *, .three > *, .charts > *, .cards > *, .media-grid > * { min-width: 0; }
+    .cards { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 8px; }
     .card {
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--soft);
-      padding: 12px;
+      padding: 10px 12px;
       display: grid;
-      gap: 8px;
-      min-height: 84px;
+      gap: 6px;
+      min-height: 72px;
     }
-    .card strong { font-size: 24px; line-height: 1; }
-    .stack { display: grid; gap: 12px; }
-    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .card strong { font-size: 22px; line-height: 1; }
+    .stack { display: grid; gap: 12px; min-width: 0; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+    .button-row button { flex: 0 0 auto; }
+    .segmented {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .segmented button {
+      min-height: 30px;
+      border-color: transparent;
+      background: transparent;
+      padding: 5px 9px;
+    }
+    .segmented button.active-filter { background: var(--accent-soft); color: var(--accent); border-color: #cfe0fb; }
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; min-width: 0; }
+    .three { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
     .charts { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 12px; align-items: stretch; }
     .chart-box {
       border: 1px solid var(--line);
@@ -94,6 +119,7 @@
       display: grid;
       gap: 10px;
       min-height: 150px;
+      min-width: 0;
     }
     .gauge { height: 10px; border-radius: 999px; background: #e8edf4; overflow: hidden; }
     .gauge-fill { width: 0%; height: 100%; background: var(--ok); transition: width .2s ease; }
@@ -124,6 +150,7 @@
     button.danger { color: var(--danger); border-color: #efc7c7; }
     input, textarea, select {
       width: 100%;
+      min-width: 0;
       border: 1px solid var(--line);
       border-radius: 6px;
       padding: 8px 10px;
@@ -132,7 +159,7 @@
       font: inherit;
     }
     textarea { min-height: 106px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
-    label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; min-width: 0; }
     .hint { color: var(--muted); font-size: 12px; }
     .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
@@ -155,21 +182,75 @@
       padding: 10px;
       display: grid;
       gap: 8px;
+      min-width: 0;
     }
-    .account-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+    .account-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; min-width: 0; }
+    .account-top > div:first-child { min-width: 0; }
     .account-name { font-weight: 700; overflow-wrap: anywhere; }
-    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+    .media-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+    .media-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+    .media-card img, .media-card video {
+      width: 100%;
+      min-width: 0;
+      max-height: 320px;
+      object-fit: contain;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+    .media-card audio { width: 100%; }
+    .media-preview-empty { min-width: 0; overflow-wrap: anywhere; }
+    .media-title { font-weight: 700; overflow-wrap: anywhere; }
+    .media-url {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    .line-clamp {
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow-wrap: anywhere;
+    }
+    .media-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .media-preview-empty {
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      color: var(--muted);
+      background: var(--soft);
+      font-size: 12px;
+      min-height: 72px;
+      display: grid;
+      align-content: center;
+    }
+    .accounts-layout { display: grid; gap: 14px; min-width: 0; }
+    .account-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+    .account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; max-width: 100%; min-width: 0; max-height: 620px; }
     table { width: 100%; border-collapse: collapse; min-width: 1040px; }
     th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
-    th { background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 650; }
+    th { background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 650; position: sticky; top: 0; z-index: 1; }
     tr:last-child td { border-bottom: 0; }
     .error-cell { white-space: normal; overflow-wrap: anywhere; min-width: 220px; max-width: 420px; }
+    .clip-cell { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .nowrap { white-space: nowrap; }
     .ok-text { color: var(--ok); font-weight: 650; }
     .bad-text { color: var(--danger); font-weight: 650; }
     pre {
       margin: 0;
       max-height: 360px;
+      max-width: 100%;
       overflow: auto;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -178,9 +259,32 @@
       padding: 12px;
       font-size: 12px;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    details.raw-json {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--soft);
+      min-width: 0;
+      max-width: 100%;
+    }
+    details.raw-json:not([open]) { background: #fff; }
+    details.raw-json > summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      user-select: none;
+    }
+    details.raw-json pre {
+      border: 0;
+      border-top: 1px solid var(--line);
+      border-radius: 0;
+      max-height: 260px;
     }
     .view { display: none; }
-    .view.active { display: grid; gap: 16px; }
+    .view.active { display: grid; gap: 14px; }
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -205,13 +309,24 @@
     .modal-body { padding: 14px; display: grid; gap: 12px; }
     .notice { border: 1px solid #cfe0fb; background: var(--accent-soft); color: #24486f; border-radius: 8px; padding: 10px; font-size: 12px; }
     @media (max-width: 980px) {
-      .grid, .split, .three, .charts { grid-template-columns: 1fr; }
+      .grid, .split, .three, .charts, .media-grid, .account-tools { grid-template-columns: 1fr; }
       .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 560px) {
       header { flex-direction: column; align-items: flex-start; }
+      main { padding: 10px; }
+      nav {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        padding: 6px;
+      }
+      nav button { width: 100%; }
+      .section-head { align-items: flex-start; flex-direction: column; }
+      .section-head > button, .section-head .row { width: 100%; }
       .cards { grid-template-columns: 1fr; }
-      button { width: 100%; }
+      .row button:not(nav button) { flex: 1 1 120px; }
+      .button-row button { flex: 1 1 120px; }
+      .table-wrap { max-width: calc(100vw - 48px); max-height: 520px; }
     }
   </style>
 </head>
@@ -260,8 +375,8 @@
           </div>
           <div class="three">
             <div class="item"><b>Gemini 3.1 Pro</b><span class="hint">model: gemini 或 gemini-3.1-pro</span></div>
-            <div class="item"><b>Gemini 3 Flash</b><span class="hint">model: gemini-3-flash</span></div>
-            <div class="item"><b>Gemini 3 Thinking</b><span class="hint">model: gemini-3-flash-thinking</span></div>
+            <div class="item"><b>Gemini 3.5 Flash</b><span class="hint">model: gemini-3.5-flash</span></div>
+            <div class="item"><b>Gemini 3.1 Flash-Lite</b><span class="hint">model: gemini-3.1-flash-lite</span></div>
           </div>
         </div>
       </section>
@@ -285,7 +400,7 @@
       <section>
         <div class="section-head">
           <h2>Gemini 原生生成</h2>
-          <div class="row">
+          <div class="row button-row">
             <button id="nativeGenerateBtn" class="primary">生成</button>
             <button id="nativeStreamBtn" class="soft">流式生成</button>
           </div>
@@ -296,8 +411,8 @@
               <select id="nativeModel">
                 <option value="gemini">gemini / 3.1 Pro</option>
                 <option value="gemini-3.1-pro">gemini-3.1-pro</option>
-                <option value="gemini-3-flash">gemini-3-flash</option>
-                <option value="gemini-3-flash-thinking">gemini-3-flash-thinking</option>
+                <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
               </select>
             </label>
             <label>Gem
@@ -313,12 +428,15 @@
             <label>附件
               <input id="nativeFile" type="file">
             </label>
-            <div class="row">
+            <div class="row button-row">
               <button id="uploadFileBtn">上传附件</button>
               <span id="fileInfo" class="hint"></span>
             </div>
           </div>
-          <pre id="nativeOutput">等待生成结果...</pre>
+          <div class="stack">
+            <div id="nativePreview" class="media-preview-empty">媒体结果会显示在这里。</div>
+            <details class="raw-json"><summary>原始 JSON</summary><pre id="nativeOutput">等待生成结果...</pre></details>
+          </div>
         </div>
       </section>
     </div>
@@ -334,7 +452,7 @@
             <label>名称<input id="gemName" placeholder="例如：代码审查助手"></label>
             <label>描述<input id="gemDescription" placeholder="可选"></label>
             <label>System Prompt<textarea id="gemPrompt" placeholder="写入 Gem 的系统提示词"></textarea></label>
-            <div class="row">
+            <div class="row button-row">
               <button id="createGemBtn" class="primary">创建 Gem</button>
               <button id="updateGemBtn">更新选中 Gem</button>
               <button id="deleteGemBtn" class="danger">删除选中 Gem</button>
@@ -350,7 +468,7 @@
       <section>
         <div class="section-head">
           <h2>Deep Research</h2>
-          <div class="row">
+          <div class="row button-row">
             <button id="researchPlanBtn" class="primary">创建计划</button>
             <button id="researchStartBtn">启动</button>
             <button id="researchStatusBtn">查状态</button>
@@ -368,28 +486,12 @@
             <button id="refreshJobsBtn">刷新任务列表</button>
             <div id="jobList" class="stack"></div>
           </div>
-          <pre id="researchOutput">等待 Deep Research 操作...</pre>
+          <details class="raw-json" open><summary>任务输出</summary><pre id="researchOutput">等待 Deep Research 操作...</pre></details>
         </div>
       </section>
     </div>
 
     <div id="media" class="view">
-      <section>
-        <div class="section-head">
-          <h2>媒体结果</h2>
-          <button id="refreshMediaBtn">刷新媒体</button>
-        </div>
-        <div class="content stack">
-          <div class="row">
-            <button data-media-kind="">全部</button>
-            <button data-media-kind="image">图片</button>
-            <button data-media-kind="video">视频</button>
-            <button data-media-kind="audio">音频</button>
-            <button data-media-kind="web_image">网页图片</button>
-          </div>
-          <div id="mediaList" class="three"></div>
-        </div>
-      </section>
       <section>
         <div class="section-head">
           <h2>媒体生成</h2>
@@ -407,40 +509,45 @@
               </label>
               <label>模型
                 <select id="mediaGenerateModel">
-                  <option value="gemini-3-flash">gemini-3-flash</option>
                   <option value="gemini">gemini / 3.1 Pro</option>
                   <option value="gemini-3.1-pro">gemini-3.1-pro</option>
+                  <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                  <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
                 </select>
               </label>
             </div>
             <label>生成描述
               <textarea id="mediaGeneratePrompt" placeholder="描述要生成的图片、视频或音频内容"></textarea>
             </label>
-            <div class="notice">生成结果会继续保存到媒体索引；本地默认只记录 URL 和元信息。</div>
+            <div class="notice">生成结果会保存到媒体索引，并尽量缓存到本地 data/media-cache；如果原始链接失效，已缓存内容仍可预览。</div>
           </div>
-          <pre id="mediaGenerateOutput">等待媒体生成...</pre>
+          <div class="stack">
+            <div id="mediaGeneratePreview" class="media-preview-empty">生成后的图片、视频或音频会显示在这里。</div>
+            <details class="raw-json"><summary>原始 JSON</summary><pre id="mediaGenerateOutput">等待媒体生成...</pre></details>
+          </div>
+        </div>
+      </section>
+      <section>
+        <div class="section-head">
+          <h2>媒体结果</h2>
+          <button id="refreshMediaBtn">刷新媒体</button>
+        </div>
+        <div class="content stack">
+          <div class="segmented" id="mediaFilters">
+            <button data-media-kind="" class="active-filter">全部</button>
+            <button data-media-kind="image">图片</button>
+            <button data-media-kind="video">视频</button>
+            <button data-media-kind="audio">音频</button>
+            <button data-media-kind="web_image">网页图片</button>
+          </div>
+          <div id="mediaList" class="three"></div>
         </div>
       </section>
     </div>
 
     <div id="accounts" class="view">
-      <div class="grid">
-        <div class="stack">
-          <section>
-            <div class="section-head"><h2>账户池</h2><button id="refreshAccountsBtn">刷新</button></div>
-            <div class="content stack">
-              <div id="currentAccountPanel" class="notice">当前账户状态加载中...</div>
-              <div class="row">
-                <button id="importBtn">导入</button>
-                <button id="exportBtn">导出</button>
-                <button id="validateCurrentBtn">验证当前</button>
-                <button id="validateAllBtn">验证全部</button>
-                <button id="manualOpenBtn">手动添加</button>
-                <button id="authOpenBtn" class="primary">网页授权</button>
-              </div>
-              <div id="accountList" class="stack"></div>
-            </div>
-          </section>
+      <div class="accounts-layout">
+        <div class="account-tools">
           <section>
             <div class="section-head"><h2>切换设置</h2><button id="saveSettingsBtn" class="primary">保存设置</button></div>
             <div class="content stack">
@@ -452,16 +559,31 @@
               <span class="hint">设置为 0 表示关闭对应自动切换；429/503 和鉴权错误仍会保护性切换。</span>
             </div>
           </section>
+          <section>
+            <div class="section-head"><h2>授权操作</h2><button id="saveAuthBtn" class="primary">保存授权 Cookie</button></div>
+            <div class="content stack">
+              <div class="notice">点击“网页授权”会启动容器内浏览器，并在新界面打开 noVNC。登录完成后回到这里保存 Cookie。</div>
+              <div class="row button-row">
+                <button id="reopenAuthBtn">打开授权界面</button>
+                <button id="reloadAuthBtn">刷新授权浏览器</button>
+                <button id="closeAuthBtn">关闭授权会话</button>
+              </div>
+            </div>
+          </section>
         </div>
         <section>
-          <div class="section-head"><h2>授权操作</h2><button id="saveAuthBtn" class="primary">保存授权 Cookie</button></div>
+          <div class="section-head"><h2>账户池</h2><button id="refreshAccountsBtn">刷新</button></div>
           <div class="content stack">
-            <div class="notice">点击“网页授权”会启动容器内浏览器，并在新界面打开 noVNC。登录完成后回到这里保存 Cookie。</div>
-            <div class="row">
-              <button id="reopenAuthBtn">打开授权界面</button>
-              <button id="reloadAuthBtn">刷新授权浏览器</button>
-              <button id="closeAuthBtn">关闭授权会话</button>
+            <div id="currentAccountPanel" class="notice">当前账户状态加载中...</div>
+            <div class="row button-row">
+              <button id="importBtn">导入</button>
+              <button id="exportBtn">导出</button>
+              <button id="validateCurrentBtn">验证当前</button>
+              <button id="validateAllBtn">验证全部</button>
+              <button id="manualOpenBtn">手动添加</button>
+              <button id="authOpenBtn" class="primary">网页授权</button>
             </div>
+            <div id="accountList" class="account-grid"></div>
           </div>
         </section>
       </div>
@@ -477,7 +599,7 @@
         <label>__Secure-1PSID<textarea id="manualPsid"></textarea></label>
         <label>__Secure-1PSIDTS<textarea id="manualPsidts"></textarea></label>
         <label>完整 cookies JSON<textarea id="manualCookies" placeholder='{"__Secure-1PSID":"..."}'></textarea></label>
-        <div class="row"><button id="manualAddBtn" class="primary">添加到账户池</button><button data-close-modal="manualModal">取消</button></div>
+        <div class="row button-row"><button id="manualAddBtn" class="primary">添加到账户池</button><button data-close-modal="manualModal">取消</button></div>
       </div>
     </div>
   </div>
@@ -487,7 +609,7 @@
       <div class="modal-head"><h2>保存授权 Cookie</h2><button data-close-modal="authSaveModal">关闭</button></div>
       <div class="modal-body">
         <label>账户名<input id="authSaveName" placeholder="可选"></label>
-        <div class="row"><button id="authSaveConfirmBtn" class="primary">保存</button><button data-close-modal="authSaveModal">取消</button></div>
+        <div class="row button-row"><button id="authSaveConfirmBtn" class="primary">保存</button><button data-close-modal="authSaveModal">取消</button></div>
       </div>
     </div>
   </div>
@@ -621,7 +743,7 @@
       const expiredText = current.expired ? "已过期，需要重新认证" : "认证状态正常";
       const enabledText = current.enabled ? "启用" : "停用";
       const validation = current.validation_status ? `最近验证：${esc(current.validation_status)}${current.validated_at ? ` / ${esc(fmt(current.validated_at))}` : ""}` : "尚未验证";
-      $("currentAccountPanel").innerHTML = `当前账户 #${current.id} ${esc(current.name || "未命名")}，${enabledText}，${expiredText}。调用 ${current.usage_count} 次，失败 ${current.failure_count} 次${current.last_used_at ? `，最近 ${esc(fmt(current.last_used_at))}` : ""}。${validation}${current.validation_message ? `，${esc(current.validation_message)}` : ""}。`;
+      $("currentAccountPanel").innerHTML = `<b>当前账户 #${current.id} ${esc(current.name || "未命名")}</b>，${enabledText}，${expiredText}。调用 ${current.usage_count} 次，失败 ${current.failure_count} 次${current.last_used_at ? `，最近 ${esc(fmt(current.last_used_at))}` : ""}。${validation}。`;
     }
     function renderAccounts(accounts) {
       $("accountList").innerHTML = accounts.length ? accounts.map(a => `
@@ -630,16 +752,16 @@
             <div>
               <div class="account-name">#${a.id} ${esc(a.name || "未命名账户")}</div>
               <div class="hint">调用 ${a.usage_count} 次，失败 ${a.failure_count} 次${a.last_used_at ? `，最近 ${esc(fmt(a.last_used_at))}` : ""}</div>
-              <div class="hint">${a.validation_status ? `验证 ${esc(a.validation_status)}${a.validated_at ? `，${esc(fmt(a.validated_at))}` : ""}` : "尚未验证"}${a.validation_message ? `，${esc(a.validation_message)}` : ""}</div>
+              <div class="hint line-clamp" title="${esc(a.validation_message || "")}">${a.validation_status ? `验证 ${esc(a.validation_status)}${a.validated_at ? `，${esc(fmt(a.validated_at))}` : ""}` : "尚未验证"}${a.validation_message ? `，${esc(a.validation_message)}` : ""}</div>
             </div>
             <div class="row">${a.current ? `<span class="pill current">当前</span>` : ""}<span class="pill ${a.enabled ? "" : "off"}">${a.enabled ? "启用" : "停用"}</span><span class="pill ${a.expired ? "off" : "current"}">${a.expired ? "需认证" : "有效"}</span></div>
           </div>
-          <div class="row"><button data-action="use" data-id="${a.id}">设为当前</button><button data-action="validate" data-id="${a.id}">验证</button><button data-action="toggle" data-id="${a.id}" data-enabled="${a.enabled}">${a.enabled ? "停用" : "启用"}</button><button class="danger" data-action="delete" data-id="${a.id}">删除</button></div>
+          <div class="row button-row"><button data-action="use" data-id="${a.id}">设为当前</button><button data-action="validate" data-id="${a.id}">验证</button><button data-action="toggle" data-id="${a.id}" data-enabled="${a.enabled}">${a.enabled ? "停用" : "启用"}</button><button class="danger" data-action="delete" data-id="${a.id}">删除</button></div>
         </div>`).join("") : `<div class="hint">还没有账户。</div>`;
     }
     function renderLogs() {
       $("requestLogRows").innerHTML = state.logs.length ? state.logs.map(l => `
-        <tr><td>${esc(fmt(l.time))}</td><td class="${l.ok ? "ok-text" : "bad-text"}">${l.ok ? "成功" : "失败"}</td><td>#${l.account_id ?? "-"} ${esc(l.account_name || "")}</td><td title="${esc(l.model || "-")}">${esc(l.model || "-")}${l.stream ? " / stream" : ""}</td><td title="${esc(l.endpoint)}">${esc(l.endpoint)}</td><td>${esc(l.output_type || "-")}</td><td>${l.media_count || 0}</td><td>${l.duration_ms} ms</td><td class="error-cell">${esc(l.error || "")}</td></tr>
+        <tr><td>${esc(fmt(l.time))}</td><td class="${l.ok ? "ok-text" : "bad-text"}">${l.ok ? "成功" : "失败"}</td><td class="clip-cell" title="#${l.account_id ?? "-"} ${esc(l.account_name || "")}">#${l.account_id ?? "-"} ${esc(l.account_name || "")}</td><td class="clip-cell" title="${esc(l.model || "-")}">${esc(l.model || "-")}${l.stream ? " / stream" : ""}</td><td class="clip-cell" title="${esc(l.endpoint)}">${esc(l.endpoint)}</td><td class="clip-cell" title="${esc(l.output_type || "-")}">${esc(l.output_type || "-")}</td><td>${l.media_count || 0}</td><td>${l.duration_ms} ms</td><td class="error-cell">${esc(l.error || "")}</td></tr>
       `).join("") : `<tr><td colspan="9" class="hint">还没有请求日志。</td></tr>`;
     }
     function renderGems() {
@@ -660,15 +782,62 @@
         <div class="item"><b>${esc(j.job_id)}</b><span class="hint">${esc(j.state)} / ${esc(j.prompt || "")}</span><button data-job-id="${esc(j.job_id)}">选中</button></div>
       `).join("") : `<div class="hint">还没有 Deep Research 任务。</div>`;
     }
+    function mediaKindLabel(kind) {
+      return { image: "图片", web_image: "网页图片", video: "视频", audio: "音频", media: "媒体" }[kind] || kind || "媒体";
+    }
+    function playableMediaUrl(item) {
+      return item.cached ? (item.content_url || item.url || item.thumbnail || "") : (item.content_url || "");
+    }
+    function mediaItemMarkup(item, index = 0) {
+      const kind = item.kind || item.type || "media";
+      const url = playableMediaUrl(item);
+      const title = item.title || `${mediaKindLabel(kind)} #${item.id ?? index + 1}`;
+      const thumb = item.thumbnail && item.thumbnail !== url ? item.thumbnail : "";
+      const canInline = item.cached || !item.id;
+      const preview = !canInline
+        ? `<div class="media-preview-empty">历史媒体未缓存，点击下方链接尝试通过账户代理打开。</div>`
+        : kind === "image" || kind === "web_image"
+          ? `<img src="${esc(url)}" alt="${esc(title)}" loading="lazy">`
+          : kind === "video"
+            ? `<video src="${esc(url)}" controls preload="metadata" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>`
+            : kind === "audio"
+              ? `<audio src="${esc(url)}" controls preload="metadata"></audio>`
+              : `<div class="media-preview-empty">暂不支持内嵌预览，可打开结果查看。</div>`;
+      return `
+        <div class="media-card">
+          <div class="row"><span class="pill">${esc(mediaKindLabel(kind))}</span>${item.cached ? `<span class="pill current">已缓存</span>` : `<span class="pill off">代理</span>`}<span class="hint">${esc(fmt(item.created_at || ""))}</span></div>
+          ${url ? preview : `<div class="media-preview-empty">结果里没有可访问 URL。</div>`}
+          <div class="media-title">${esc(title)}</div>
+          ${item.url ? `<div class="hint media-url" title="${esc(item.url)}">${esc(item.url)}</div>` : ""}
+          <div class="media-actions">
+            ${url ? `<a href="${esc(url)}" target="_blank">打开缓存/代理链接</a>` : ""}
+            ${item.url && item.url !== url ? `<a href="${esc(item.url)}" target="_blank">来源链接</a>` : ""}
+          </div>
+        </div>
+      `;
+    }
+    function generatedMediaItems(data) {
+      const output = data?.output || data || {};
+      return [
+        ...(output.images || []),
+        ...(output.videos || []),
+        ...(output.media || []),
+        ...(output.web_images || []),
+      ].filter(item => item && (item.url || item.content_url || item.thumbnail));
+    }
+    function renderGeneratedPreview(id, data) {
+      const items = generatedMediaItems(data);
+      $(id).innerHTML = items.length
+        ? `<div class="media-grid">${items.map(mediaItemMarkup).join("")}</div>`
+        : `<div class="media-preview-empty">本次结果没有可预览的媒体。</div>`;
+    }
+    function renderRequestMediaPreview(id, requestId) {
+      const items = state.media.filter(item => item.request_id === requestId);
+      if (items.length) $(id).innerHTML = `<div class="media-grid">${items.map(mediaItemMarkup).join("")}</div>`;
+    }
     function renderMedia() {
       $("mediaList").innerHTML = state.media.length ? state.media.map(m => `
-        <div class="item">
-          <b>${esc(m.kind)} #${m.id}</b>
-          <span class="hint">${esc(m.title || "")}</span>
-          ${m.thumbnail ? `<a href="${esc(m.thumbnail)}" target="_blank">缩略图</a>` : ""}
-          <a href="${esc(m.url)}" target="_blank">打开结果</a>
-          <span class="hint">${esc(fmt(m.created_at))}</span>
-        </div>
+        ${mediaItemMarkup(m)}
       `).join("") : `<div class="hint">还没有媒体结果。</div>`;
     }
     function parseCookieJson(raw) {
@@ -706,6 +875,7 @@
       return {
         prompt: mediaPrompt(),
         model: $("mediaGenerateModel").value,
+        mode: $("mediaGenerateKind").value,
         temporary: true,
         deep_research: false,
         file_ids: [],
@@ -727,13 +897,24 @@
     $("refreshMediaBtn").onclick = () => refreshMedia();
     $("refreshGemsBtn").onclick = refreshGems;
     $("refreshJobsBtn").onclick = refreshJobs;
-    document.querySelectorAll("[data-media-kind]").forEach(btn => btn.onclick = () => refreshMedia(btn.dataset.mediaKind));
+    document.querySelectorAll("[data-media-kind]").forEach(btn => btn.onclick = () => {
+      document.querySelectorAll("[data-media-kind]").forEach(item => item.classList.toggle("active-filter", item === btn));
+      refreshMedia(btn.dataset.mediaKind);
+    });
     $("manualOpenBtn").onclick = () => openModal("manualModal");
     $("saveAuthBtn").onclick = () => openModal("authSaveModal");
 
     $("nativeGenerateBtn").onclick = async () => {
-      try { showJson("nativeOutput", await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await nativePayload()) })); await refreshAll(); }
-      catch (e) { showJson("nativeOutput", e.message); }
+      try {
+        const data = await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await nativePayload()) });
+        renderGeneratedPreview("nativePreview", data);
+        showJson("nativeOutput", data);
+        await refreshAll();
+        renderRequestMediaPreview("nativePreview", data.request_id);
+      } catch (e) {
+        renderGeneratedPreview("nativePreview", null);
+        showJson("nativeOutput", e.message);
+      }
     };
     $("nativeStreamBtn").onclick = async () => {
       try {
@@ -747,10 +928,16 @@
     $("mediaGenerateBtn").onclick = async () => {
       try {
         if (!$("mediaGeneratePrompt").value.trim()) return setMsg("请输入媒体生成描述");
-        showJson("mediaGenerateOutput", await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await mediaPayload()) }));
+        const data = await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await mediaPayload()) });
+        renderGeneratedPreview("mediaGeneratePreview", data);
+        showJson("mediaGenerateOutput", data);
         await refreshMedia();
+        renderRequestMediaPreview("mediaGeneratePreview", data.request_id);
         await refreshLogs();
-      } catch (e) { showJson("mediaGenerateOutput", e.message); }
+      } catch (e) {
+        renderGeneratedPreview("mediaGeneratePreview", null);
+        showJson("mediaGenerateOutput", e.message);
+      }
     };
     $("uploadFileBtn").onclick = async () => {
       const file = $("nativeFile").files[0];

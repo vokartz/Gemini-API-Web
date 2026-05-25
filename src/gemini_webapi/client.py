@@ -37,6 +37,8 @@ from .exceptions import (
     TemporarilyBlocked,
     TimeoutError,
     UsageLimitExceeded,
+    VideoGenerationFailed,
+    VideoGenerationNotSubmitted,
 )
 from .types import (
     AvailableModel,
@@ -543,6 +545,7 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
         chat: Optional["ChatSession"] = None,
         temporary: bool = False,
         deep_research: bool = False,
+        generation_mode: str | None = None,
         **kwargs,
     ) -> ModelOutput:
         """
@@ -623,6 +626,8 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                 "is_thinking": False,
                 "is_queueing": False,
             }
+            normalized_generation_mode = (generation_mode or "").strip().lower()
+            generate_retry = 0 if normalized_generation_mode == "video" else None
             output = None
             async for output in self._generate(
                 prompt=prompt,
@@ -633,6 +638,8 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                 temporary=temporary,
                 session_state=session_state,
                 deep_research=deep_research,
+                generation_mode=normalized_generation_mode,
+                current_retry=generate_retry,
                 **kwargs,
             ):
                 pass
@@ -663,6 +670,7 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
         chat: Optional["ChatSession"] = None,
         temporary: bool = False,
         deep_research: bool = False,
+        generation_mode: str | None = None,
         **kwargs,
     ) -> AsyncGenerator[ModelOutput, None]:
         """
@@ -735,6 +743,8 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                 "last_texts": {},
                 "last_thoughts": {},
             }
+            normalized_generation_mode = (generation_mode or "").strip().lower()
+            generate_retry = 0 if normalized_generation_mode == "video" else None
             output = None
             async for output in self._generate(
                 prompt=prompt,
@@ -745,6 +755,8 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                 temporary=temporary,
                 session_state=session_state,
                 deep_research=deep_research,
+                generation_mode=normalized_generation_mode,
+                current_retry=generate_retry,
                 **kwargs,
             ):
                 yield output
@@ -770,6 +782,7 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
         temporary: bool = False,
         session_state: dict[str, Any] | None = None,
         deep_research: bool = False,
+        generation_mode: str | None = None,
         **kwargs,
     ) -> AsyncGenerator[ModelOutput, None]:
         """
@@ -816,8 +829,24 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                 "last_thoughts": {},
             }
 
+        video_generation = generation_mode == "video"
+        wait_timeout = max(self.timeout, 20 * 60) if video_generation else self.timeout
+        watchdog_timeout = (
+            max(self.watchdog_timeout, 20 * 60)
+            if video_generation
+            else self.watchdog_timeout
+        )
         has_generated_text = False
         sleep_time = 10
+        request_start_time = time.time()
+        recent_chat_ids_before_request: set[str] = set()
+        if video_generation:
+            try:
+                recent_chat_ids_before_request = {
+                    item.cid for item in (self.list_chats() or []) if item.cid
+                }
+            except Exception:
+                recent_chat_ids_before_request = set()
 
         message_content = [
             prompt,
@@ -1198,9 +1227,9 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                     while True:
                         try:
                             stall_threshold = (
-                                self.timeout
+                                wait_timeout
                                 if (is_thinking or is_queueing)
-                                else min(self.timeout, self.watchdog_timeout)
+                                else min(wait_timeout, watchdog_timeout)
                             )
                             chunk = await asyncio.wait_for(
                                 chunk_iterator.__anext__(), timeout=stall_threshold + 5
@@ -1231,9 +1260,9 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                             last_progress_time = time.time()
                         else:
                             stall_threshold = (
-                                self.timeout
+                                wait_timeout
                                 if (is_thinking or is_queueing)
-                                else min(self.timeout, self.watchdog_timeout)
+                                else min(wait_timeout, watchdog_timeout)
                             )
                             if (time.time() - last_progress_time) > stall_threshold:
                                 if is_thinking:
@@ -1270,9 +1299,9 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                             poll_start_time = time.time()
 
                             while True:
-                                if (time.time() - poll_start_time) > self.timeout:
+                                if (time.time() - poll_start_time) > wait_timeout:
                                     logger.warning(
-                                        f"[Recovery] Polling for {cid} timed out after {self.timeout}s."
+                                        f"[Recovery] Polling for {cid} timed out after {wait_timeout}s."
                                     )
                                     await self.close()
                                     if has_generated_text:
@@ -1338,6 +1367,16 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                                 f"Stream suspended (completed={is_completed}, final_chunk={is_final_chunk}, thinking={is_thinking}, queueing={is_queueing}). "
                                 f"No CID found to recover. (Request ID: {_reqid})"
                             )
+                            if video_generation:
+                                recovered = await self._recover_video_from_recent_chats(
+                                    previous_chat_ids=recent_chat_ids_before_request,
+                                    request_start_time=request_start_time,
+                                    timeout=wait_timeout,
+                                    sleep_time=sleep_time,
+                                )
+                                if recovered is not None:
+                                    yield recovered
+                                    break
                             raise APIError(
                                 "The original request may have been silently aborted by Google."
                             )
@@ -1377,6 +1416,160 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                 raise APIError(
                     f"Failed to parse response body from Google ({type(e).__name__}). This might be a temporary API change or invalid data."
                 )
+
+    @staticmethod
+    def _output_has_generated_video(output: ModelOutput | None) -> bool:
+        if output is None:
+            return False
+        try:
+            if output.videos:
+                return True
+            return any(
+                bool(getattr(item, "mp4_url", "") or getattr(item, "url", ""))
+                for item in output.media
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _output_has_any_content(output: ModelOutput | None) -> bool:
+        if output is None:
+            return False
+        try:
+            return bool(
+                output.text
+                or output.thoughts
+                or output.images
+                or output.videos
+                or output.media
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _output_text(output: ModelOutput | None) -> str:
+        if output is None:
+            return ""
+        try:
+            return output.text or ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _output_is_pending_video(output: ModelOutput | None) -> bool:
+        text = GeminiClient._output_text(output)
+        if not text:
+            return False
+        pending_markers = (
+            "正在生成视频",
+            "生成视频",
+            "video_gen_chip",
+            "this may take a few minutes",
+            "come back",
+            "check back",
+        )
+        normalized = text.lower()
+        return any(marker.lower() in normalized for marker in pending_markers)
+
+    async def _recover_video_from_recent_chats(
+        self,
+        *,
+        previous_chat_ids: set[str],
+        request_start_time: float,
+        timeout: float,
+        sleep_time: float,
+    ) -> ModelOutput | None:
+        poll_start = time.time()
+        logger.debug(
+            "[Recovery] Video stream ended before a CID was emitted. "
+            "Polling recent chats for the submitted video task..."
+        )
+
+        confirmed_target = False
+        confirmed_chat_id = ""
+        while (time.time() - poll_start) <= timeout:
+            await self._send_bard_activity()
+            try:
+                await self._fetch_recent_chats(recent=20)
+            except Exception as exc:
+                logger.debug(f"[Recovery] Failed to refresh recent chats: {exc}")
+                await asyncio.sleep(sleep_time)
+                continue
+
+            recent_chats = self.list_chats() or []
+            candidates = []
+            for chat_info in recent_chats:
+                if not chat_info.cid:
+                    continue
+                is_new_chat = chat_info.cid not in previous_chat_ids
+                is_recent_chat = chat_info.timestamp >= request_start_time - 5
+                if is_new_chat or is_recent_chat:
+                    candidates.append(chat_info)
+
+            if not candidates and not confirmed_target:
+                logger.debug(
+                    "[Recovery] No new Gemini chat appeared after the video request; "
+                    "treating the submission as unconfirmed."
+                )
+                raise VideoGenerationNotSubmitted(
+                    "Gemini did not confirm a submitted video task. "
+                    "No new chat/job appeared after the request, so Gemini-API will not wait or count this as a consumed video attempt."
+                )
+
+            candidates.sort(key=lambda item: item.timestamp, reverse=True)
+            for chat_info in candidates:
+                if confirmed_chat_id and chat_info.cid != confirmed_chat_id:
+                    continue
+                recovered = await self.fetch_latest_chat_response(chat_info.cid)
+                if self._output_has_generated_video(recovered):
+                    logger.debug(
+                        f"[Recovery] Recovered generated video from recent chat {chat_info.cid}."
+                    )
+                    return recovered
+                if recovered is not None:
+                    if self._output_is_pending_video(recovered):
+                        confirmed_target = True
+                        confirmed_chat_id = chat_info.cid
+                        logger.debug(
+                            f"[Recovery] Recent chat {chat_info.cid} confirmed a pending video task."
+                        )
+                    elif confirmed_chat_id == chat_info.cid and self._output_has_any_content(recovered):
+                        message = self._output_text(recovered).strip()
+                        logger.debug(
+                            f"[Recovery] Confirmed video chat {chat_info.cid} ended without video media."
+                        )
+                        raise VideoGenerationFailed(
+                            message
+                            or "Gemini ended the video generation task without returning video media."
+                        )
+                    elif self._output_has_any_content(recovered):
+                        logger.debug(
+                            f"[Recovery] Recent chat {chat_info.cid} has non-video content; waiting for the confirmed video task."
+                        )
+                    else:
+                        logger.debug(
+                            f"[Recovery] Recent chat {chat_info.cid} is empty; waiting for confirmation..."
+                        )
+
+            if not confirmed_target and (time.time() - poll_start) >= sleep_time * 2:
+                logger.debug(
+                    "[Recovery] No recoverable video chat content appeared after the request; "
+                    "treating the submission as unconfirmed."
+                )
+                raise VideoGenerationNotSubmitted(
+                    "Gemini did not confirm a submitted video task. "
+                    "No recoverable chat content appeared after the request, so Gemini-API will not keep waiting."
+                )
+
+            logger.debug(
+                f"[Recovery] Video is still generating; waiting {sleep_time}s before polling again..."
+            )
+            await asyncio.sleep(sleep_time)
+
+        logger.warning(
+            f"[Recovery] Timed out after {timeout}s while waiting for generated video media."
+        )
+        return None
 
     def _parse_candidate(
         self, candidate_data: list[Any], cid: str, rid: str, rcid: str

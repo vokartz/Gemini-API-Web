@@ -19,7 +19,7 @@ class AvailableModel(BaseModel):
     model_id: `str`
         Hex identifier of the model (e.g. "9d8ca3786ebdfbea").
     model_name: `str`
-        User-friendly name of the model (e.g. "gemini-3-pro").
+        User-friendly name of the model (e.g. "gemini-3.1-pro").
     display_name: `str`
         Localised display name shown in the Gemini web UI (e.g. "Fast", "Thinking", "Pro").
     description: `str`
@@ -115,7 +115,7 @@ class AvailableModel(BaseModel):
         Build a mapping from `model_id` to `model_name` for all registered models.
 
         This uses the :class:`Model` enum to resolve hex identifiers to their
-        canonical names (e.g., "gemini-3-pro").
+        canonical names (e.g., "gemini-3.1-pro").
         """
 
         result: dict[str, str] = {}
