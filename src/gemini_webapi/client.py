@@ -2,6 +2,7 @@ import asyncio
 import codecs
 import io
 import random
+import re
 import time
 import secrets
 import uuid
@@ -67,6 +68,22 @@ from .utils import (
     save_cookies,
     upload_file,
     logger,
+)
+
+VIDEO_URL_RE = re.compile(
+    r"https?://[^\s\"'<>]+(?:googlevideo\.com|googleusercontent\.com|usercontent\.google\.com|storage\.googleapis\.com)[^\s\"'<>]*",
+    re.IGNORECASE,
+)
+VIDEO_CONTENT_MARKERS = (
+    ".mp4",
+    "videoplayback",
+    "video_generation_content",
+    "video_gen_download",
+    "filename=video.mp4",
+)
+VIDEO_PLACEHOLDER_MARKERS = (
+    "video_gen_chip",
+    "image_generation_content",
 )
 
 
@@ -1471,6 +1488,38 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
         normalized = text.lower()
         return any(marker.lower() in normalized for marker in pending_markers)
 
+    @staticmethod
+    def _is_generated_video_url(url: str) -> bool:
+        normalized = url.lower()
+        if any(marker in normalized for marker in VIDEO_PLACEHOLDER_MARKERS):
+            return False
+        return any(marker in normalized for marker in VIDEO_CONTENT_MARKERS)
+
+    @classmethod
+    def _extract_video_urls_from_payload(cls, payload: Any) -> list[str]:
+        """递归兜底提取 Gemini 新结构中的视频链接，避免固定下标漂移导致漏取。"""
+        found: list[str] = []
+
+        def add_url(value: str) -> None:
+            for match in VIDEO_URL_RE.findall(value):
+                if cls._is_generated_video_url(match) and match not in found:
+                    found.append(match)
+
+        def walk(value: Any) -> None:
+            if isinstance(value, str):
+                add_url(value)
+                return
+            if isinstance(value, dict):
+                for item in value.values():
+                    walk(item)
+                return
+            if isinstance(value, list):
+                for item in value:
+                    walk(item)
+
+        walk(payload)
+        return found
+
     async def _recover_video_from_recent_chats(
         self,
         *,
@@ -1669,6 +1718,22 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                     GeneratedVideo(
                         url=urls[1],
                         thumbnail=urls[0],
+                        cid=cid,
+                        rid=rid,
+                        rcid=rcid,
+                        client_ref=self,
+                        proxy=self.proxy,
+                    )
+                )
+        if not generated_videos:
+            # Gemini Web 会调整视频结果结构。固定路径取不到时，保守扫描候选
+            # 负载中的真实视频 URL，但过滤 video_gen_chip 等占位提示。
+            fallback_urls = self._extract_video_urls_from_payload(candidate_data)
+            if fallback_urls:
+                generated_videos.append(
+                    GeneratedVideo(
+                        url=fallback_urls[-1],
+                        thumbnail=fallback_urls[0] if len(fallback_urls) > 1 else "",
                         cid=cid,
                         rid=rid,
                         rcid=rcid,

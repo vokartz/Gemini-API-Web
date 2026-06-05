@@ -61,6 +61,85 @@ class ServerEndpointTests(unittest.TestCase):
             port=7860,
         )
 
+    def test_parse_candidate_falls_back_to_nested_video_urls(self):
+        client = GeminiClient()
+        candidate_data = [
+            None,
+            ["您的视频准备好了！"],
+            None,
+            {
+                "status": "ready",
+                "placeholder": "http://googleusercontent.com/video_gen_chip/0",
+                "thumb": "https://lh3.googleusercontent.com/preview/video_generation_content/thumb.jpg",
+                "video": "https://rr1---sn.googlevideo.com/videoplayback?id=video-test",
+            },
+        ]
+
+        _, _, _, _, videos, _ = client._parse_candidate(
+            candidate_data, "cid", "rid", "rcid"
+        )
+
+        self.assertEqual(len(videos), 1)
+        self.assertIsInstance(videos[0], GeneratedVideo)
+        self.assertEqual(
+            videos[0].url,
+            "https://rr1---sn.googlevideo.com/videoplayback?id=video-test",
+        )
+        self.assertNotIn("video_gen_chip", videos[0].url)
+
+    def test_parse_candidate_falls_back_to_google_download_video_urls(self):
+        client = GeminiClient()
+        candidate_data = [
+            None,
+            ["Your video is ready!\nhttp://googleusercontent.com/generated_video_content/0"],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            [2],
+            None,
+            None,
+            None,
+            [
+                {
+                    "60": [
+                        [
+                            [
+                                [
+                                    [
+                                        None,
+                                        None,
+                                        "video.mp4",
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        [
+                                            "",
+                                            "https://contribution.usercontent.google.com/download?filename=video.mp4&opi=103135050",
+                                        ],
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ],
+        ]
+
+        _, _, _, _, videos, _ = client._parse_candidate(
+            candidate_data, "cid", "rid", "rcid"
+        )
+
+        self.assertEqual(len(videos), 1)
+        self.assertIsInstance(videos[0], GeneratedVideo)
+        self.assertEqual(
+            videos[0].url,
+            "https://contribution.usercontent.google.com/download?filename=video.mp4&opi=103135050",
+        )
+
     def test_accounts_endpoint_lists_account_pool(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(self._config(tmp))

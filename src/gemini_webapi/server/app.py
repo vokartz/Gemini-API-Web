@@ -37,6 +37,7 @@ MEDIA_CONTENT_MAX_BYTES = 100 * 1024 * 1024
 MEDIA_CONTENT_ALLOWED_HOST_SUFFIXES = (
     ".google.com",
     ".googleusercontent.com",
+    ".usercontent.google.com",
     ".gstatic.com",
     ".googlevideo.com",
     "storage.googleapis.com",
