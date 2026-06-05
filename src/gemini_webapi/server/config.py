@@ -48,6 +48,8 @@ class ServerConfig:
     api_keys: tuple[str, ...]
     host: str
     port: int
+    admin_password: str | None = None
+    admin_session_secret: str = ""
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -86,4 +88,6 @@ class ServerConfig:
             ),
             host=os.getenv("HOST", "0.0.0.0"),
             port=_env_int("PORT", 7860, minimum=1),
+            admin_password=os.getenv("ADMIN_PASSWORD") or None,
+            admin_session_secret=os.getenv("ADMIN_SESSION_SECRET", ""),
         )

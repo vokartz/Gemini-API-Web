@@ -355,6 +355,25 @@
       z-index: 20;
     }
     .modal-backdrop.open { display: flex; }
+    .login-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: none;
+      place-items: center;
+      padding: 20px;
+      background: var(--bg);
+    }
+    .login-backdrop.open { display: grid; }
+    .login-panel {
+      width: min(420px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
     .modal {
       width: min(680px, 100%);
       max-height: calc(100vh - 36px);
@@ -421,9 +440,18 @@
   </style>
 </head>
 <body>
+  <div id="loginBackdrop" class="login-backdrop">
+    <form id="loginForm" class="login-panel">
+      <h2>管理员登录</h2>
+      <div class="notice">服务器部署模式下需要管理员密码才能进入控制台。外部 API 调用请使用系统自动生成的 API Key。</div>
+      <label>管理员密码<input id="adminPassword" type="password" autocomplete="current-password"></label>
+      <button class="primary" type="submit">登录</button>
+      <div id="loginMessage" class="hint"></div>
+    </form>
+  </div>
   <header>
     <h1>Gemini API 管理端</h1>
-    <div class="status"><span id="healthDot" class="dot"></span><span id="healthText">连接中</span></div>
+    <div class="status"><span id="healthDot" class="dot"></span><span id="healthText">连接中</span><button id="logoutBtn" style="display:none">退出</button></div>
   </header>
 
   <main>
@@ -762,7 +790,7 @@
   </div>
 
   <script>
-    const state = { status: null, logs: [], media: [], mediaCooldowns: null, gems: [], jobs: [], files: [], mediaFiles: [], systemSettings: null, authWindow: null };
+    const state = { status: null, logs: [], media: [], mediaCooldowns: null, gems: [], jobs: [], files: [], mediaFiles: [], systemSettings: null, authWindow: null, adminReady: false };
     const $ = id => document.getElementById(id);
 
     function storedApiKey() { return localStorage.getItem("gemini-api-key") || ""; }
@@ -845,6 +873,20 @@
     function openModal(id) { $(id).classList.add("open"); }
     function closeModal(id) { $(id).classList.remove("open"); }
     function noVncUrl() { return `${window.location.origin}/novnc/vnc.html?autoconnect=true&resize=scale&path=websockify`; }
+    async function checkAdmin() {
+      const response = await fetch("/v1/admin/status");
+      const data = await response.json();
+      state.adminReady = !data.enabled || data.authenticated;
+      $("logoutBtn").style.display = data.enabled && data.authenticated ? "" : "none";
+      $("loginBackdrop").classList.toggle("open", data.enabled && !data.authenticated);
+      return data;
+    }
+    async function boot() {
+      const admin = await checkAdmin();
+      if (!admin.enabled || admin.authenticated) {
+        await refreshAll();
+      }
+    }
 
     async function refreshAll() {
       await Promise.all([refreshStatus(), refreshLogs(), refreshMedia(), refreshMediaCooldowns(), refreshJobs()]);
@@ -1245,6 +1287,29 @@
       const close = event.target.closest("[data-close-modal]");
       if (close) closeModal(close.dataset.closeModal);
     };
+    $("loginForm").onsubmit = async event => {
+      event.preventDefault();
+      $("loginMessage").textContent = "正在登录...";
+      try {
+        const data = await api("/v1/admin/login", { method: "POST", body: JSON.stringify({ password: $("adminPassword").value }) });
+        if (data.authenticated) {
+          $("adminPassword").value = "";
+          $("loginBackdrop").classList.remove("open");
+          $("logoutBtn").style.display = "";
+          state.adminReady = true;
+          $("loginMessage").textContent = "";
+          await refreshAll();
+        }
+      } catch (error) {
+        $("loginMessage").textContent = error.message;
+      }
+    };
+    $("logoutBtn").onclick = async () => {
+      await api("/v1/admin/logout", { method: "POST", body: "{}" });
+      state.adminReady = false;
+      $("logoutBtn").style.display = "none";
+      await checkAdmin();
+    };
     $("refreshAllBtn").onclick = refreshAll;
     $("refreshAccountsBtn").onclick = refreshAll;
     $("mediaCooldownOverview").onclick = async event => {
@@ -1507,8 +1572,10 @@
       setMsg(data.validation.valid ? "授权 Cookie 已保存并验证通过" : `授权 Cookie 已保存，但验证失败：${data.validation.message}`);
     };
 
-    refreshAll().catch(e => setMsg(e.message));
-    setInterval(() => refreshAll().catch(() => {}), 8000);
+    boot().catch(e => setMsg(e.message));
+    setInterval(() => {
+      if (state.adminReady) refreshAll().catch(() => {});
+    }, 8000);
   </script>
 </body>
 </html>

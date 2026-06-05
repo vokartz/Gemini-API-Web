@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import mimetypes
 import asyncio
+import hashlib
+import hmac
 import secrets
 import time
 import uuid
@@ -153,6 +155,10 @@ class ObjectStorageSettings(BaseModel):
 class SystemSettingsRequest(BaseModel):
     api_keys: list[str] | None = None
     object_storage: ObjectStorageSettings | None = None
+
+
+class AdminLoginRequest(BaseModel):
+    password: str
 
 
 class AuthClickRequest(BaseModel):
@@ -673,6 +679,45 @@ def _key_fingerprint(value: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_URL, value).hex[:16]
 
 
+def _admin_secret(config: ServerConfig) -> str:
+    # 管理端会话签名密钥：服务器部署时建议单独配置，避免重启或改密码后会话状态不可控。
+    return (
+        config.admin_session_secret
+        or config.admin_password
+        or "gemini-webapi-local-admin"
+    )
+
+
+def _admin_session_value(config: ServerConfig) -> str:
+    # Cookie 中只保存签名后的时间戳，不保存管理员密码本身。
+    timestamp = str(int(time.time()))
+    signature = hmac.new(
+        _admin_secret(config).encode("utf-8"),
+        timestamp.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{timestamp}.{signature}"
+
+
+def _admin_session_valid(config: ServerConfig, value: str | None) -> bool:
+    # 未配置管理员密码时保持本地开发模式，避免默认启动后把用户锁在管理端外。
+    if not config.admin_password or not value:
+        return not config.admin_password
+    try:
+        timestamp, signature = value.split(".", 1)
+        issued_at = int(timestamp)
+    except (ValueError, TypeError):
+        return False
+    if time.time() - issued_at > 7 * 24 * 60 * 60:
+        return False
+    expected = hmac.new(
+        _admin_secret(config).encode("utf-8"),
+        timestamp.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
 def _normalize_api_keys(values: list[str] | tuple[str, ...] | None) -> list[str]:
     seen: set[str] = set()
     keys: list[str] = []
@@ -883,14 +928,58 @@ def create_app(config: ServerConfig | None = None):
 
     @app.middleware("http")
     async def bearer_auth(request: Request, call_next):
+        path = request.url.path
+        # 管理端登录只保护控制台和管理接口；OpenAI 兼容接口仍由外部 API Key 鉴权。
+        admin_public_paths = {
+            "/health",
+            "/v1/admin/status",
+            "/v1/admin/login",
+            "/static",
+        }
+        if config.admin_password and not (
+            path == "/"
+            or path.startswith("/static/")
+            or path in admin_public_paths
+        ):
+            admin_ok = _admin_session_valid(
+                config,
+                request.cookies.get("gemini_admin_session"),
+            )
+            external_api_path = path in {
+                "/v1/models",
+                "/v1/chat/completions",
+                "/v1/generate",
+                "/v1/gemini/generate",
+                "/v1/gemini/stream",
+                "/v1/gemini/media",
+                "/v1/gemini/files",
+            } or path.startswith("/v1/gemini/media/")
+            if not admin_ok and not external_api_path:
+                return JSONResponse(
+                    status_code=401,
+                    content={"ok": False, "detail": "Admin login required."},
+                )
+
         system_settings = _merge_system_settings(
             store.get_json_state(SYSTEM_SETTINGS_KEY, DEFAULT_SYSTEM_SETTINGS)
         )
         allowed_api_keys = set(config.api_keys) | set(system_settings["api_keys"])
         if (
             allowed_api_keys
-            and request.url.path.startswith("/v1/")
-            and request.url.path != "/v1/status"
+            and path.startswith("/v1/")
+            and path not in {
+                "/v1/status",
+                "/v1/admin/status",
+                "/v1/admin/login",
+                "/v1/admin/logout",
+            }
+            and not (
+                config.admin_password
+                and _admin_session_valid(
+                    config,
+                    request.cookies.get("gemini_admin_session"),
+                )
+            )
         ):
             auth = request.headers.get("authorization", "")
             token = auth.removeprefix("Bearer ").strip()
@@ -998,6 +1087,43 @@ def create_app(config: ServerConfig | None = None):
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {"ok": True}
+
+    @app.get("/v1/admin/status")
+    async def admin_status(request: Request) -> dict[str, Any]:
+        enabled = bool(config.admin_password)
+        return {
+            "enabled": enabled,
+            "authenticated": _admin_session_valid(
+                config,
+                request.cookies.get("gemini_admin_session"),
+            ),
+        }
+
+    @app.post("/v1/admin/login")
+    async def admin_login(request: AdminLoginRequest) -> Response:
+        if not config.admin_password:
+            return JSONResponse({"ok": True, "enabled": False, "authenticated": True})
+        if not hmac.compare_digest(request.password, config.admin_password):
+            raise HTTPException(status_code=401, detail="管理员密码错误。")
+        response = JSONResponse(
+            {"ok": True, "enabled": True, "authenticated": True}
+        )
+        response.set_cookie(
+            "gemini_admin_session",
+            _admin_session_value(config),
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=7 * 24 * 60 * 60,
+            path="/",
+        )
+        return response
+
+    @app.post("/v1/admin/logout")
+    async def admin_logout() -> Response:
+        response = JSONResponse({"ok": True})
+        response.delete_cookie("gemini_admin_session", path="/")
+        return response
 
     @app.get("/v1/status")
     async def status() -> dict[str, Any]:

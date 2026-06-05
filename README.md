@@ -12,6 +12,7 @@
 - OpenAI 兼容接口：`/v1/chat/completions`、`/v1/models`。
 - Gemini 原生接口：生成、流式生成、Gems、Deep Research、文件上传、媒体结果索引。
 - 管理端控制台：请求看板、账户设置、授权登录、Gems、Deep Research、媒体生成和媒体结果。
+- 服务器部署可开启管理员登录，保护网页控制台和管理接口；外部调用继续使用 API Key。
 - 媒体生成支持 `image`、`video`、`audio` 模式；生成结果会保存索引，并尽量缓存到本地，避免 Gemini 原始链接过期后无法查看。
 - 自用保护：图片/视频/音频生成会记录尝试和冷却状态，媒体额度错误或上游 2xx 但没有产出媒体时默认冷却 5 小时，避免额度异常时反复请求。
 
@@ -118,6 +119,9 @@ environment:
   REQUEST_TIMEOUT: "300"
   GEMINI_AUTO_REFRESH: "true"
   GEMINI_AUTH_HEADLESS: "false"
+  ADMIN_PASSWORD: ""
+  ADMIN_SESSION_SECRET: ""
+  API_KEYS: ""
 ```
 
 含义：
@@ -128,6 +132,30 @@ environment:
 - `REQUEST_TIMEOUT`：请求超时时间，单位秒。
 - `GEMINI_AUTO_REFRESH`：是否启用 Cookie 自动刷新。
 - `GEMINI_AUTH_HEADLESS`：授权浏览器是否无头运行。需要 noVNC 登录时保持 `false`。
+- `ADMIN_PASSWORD`：管理员密码。为空时不启用管理端登录，适合本地自用；服务器部署建议设置。
+- `ADMIN_SESSION_SECRET`：管理员会话签名密钥。服务器部署建议设置为一段随机长字符串。
+- `API_KEYS`：外部调用鉴权密钥，多个值可用英文逗号分隔；也可以在管理端“系统设置”里生成和管理。
+
+## 管理员登录与外部鉴权
+
+如果要部署到服务器，建议至少配置 `ADMIN_PASSWORD`：
+
+```sh
+ADMIN_PASSWORD=your-admin-password docker compose up -d --build
+```
+
+也可以同时配置固定会话密钥和外部 API Key：
+
+```sh
+ADMIN_PASSWORD=your-admin-password ADMIN_SESSION_SECRET=change-me-to-a-random-secret API_KEYS=sk-your-external-key docker compose up -d --build
+```
+
+启用后：
+
+- `http://localhost:7860` 会显示管理员登录页。
+- 控制台和管理接口需要管理员 Cookie。
+- `/v1/models`、`/v1/chat/completions`、`/v1/gemini/generate` 等外部接口不使用管理员登录鉴权，而是使用 `Authorization: Bearer <API_KEY>`。
+- 未配置任何 `API_KEYS` 且管理端系统设置中没有 API Key 时，外部接口保持无密钥模式，便于本地调试；服务器部署建议生成或配置 API Key。
 
 ## OpenAI 兼容接口
 
