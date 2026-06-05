@@ -227,14 +227,24 @@
       gap: 8px;
       min-width: 0;
     }
-    .media-card img, .media-card video {
-      width: 100%;
+    .media-preview {
+      aspect-ratio: 16 / 10;
       min-width: 0;
-      max-height: 320px;
-      object-fit: contain;
+      overflow: hidden;
       border: 1px solid var(--line);
       border-radius: 4px;
       background: #fffdf9;
+      display: grid;
+      place-items: center;
+    }
+    .media-card img, .media-card video {
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      object-fit: contain;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
     }
     .media-card audio { width: 100%; }
     .media-preview-empty { min-width: 0; overflow-wrap: anywhere; }
@@ -424,6 +434,7 @@
       <button data-tab="research">Deep Research</button>
       <button data-tab="media">媒体结果</button>
       <button data-tab="accounts">账户设置</button>
+      <button data-tab="system">系统设置</button>
     </nav>
 
     <div id="dashboard" class="view active">
@@ -510,11 +521,12 @@
               <label><input id="nativeTemporary" type="checkbox"> 临时会话</label>
               <label><input id="nativeDeepResearch" type="checkbox"> Deep Research 模式</label>
             </div>
-            <label>附件
-              <input id="nativeFile" type="file">
+            <label>参考附件
+              <input id="nativeFile" type="file" multiple accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv">
             </label>
             <div class="row button-row">
-              <button id="uploadFileBtn">上传附件</button>
+              <button id="uploadFileBtn">上传参考附件</button>
+              <button id="clearFilesBtn">清空附件</button>
               <span id="fileInfo" class="hint"></span>
             </div>
           </div>
@@ -604,7 +616,15 @@
             <label>生成描述
               <textarea id="mediaGeneratePrompt" placeholder="描述要生成的图片、视频或音频内容"></textarea>
             </label>
-            <div class="notice">生成结果会保存到媒体索引，并尽量缓存到本地 data/media-cache；如果原始链接失效，已缓存内容仍可预览。</div>
+            <label>参考附件
+              <input id="mediaGenerateFile" type="file" multiple accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv">
+            </label>
+            <div class="row button-row">
+              <button id="mediaUploadFileBtn">上传参考附件</button>
+              <button id="mediaClearFilesBtn">清空附件</button>
+              <span id="mediaFileInfo" class="hint"></span>
+            </div>
+            <div class="notice">管理端生成的媒体会优先上传到对象存储；未配置对象存储时回退到本地缓存。通过 API 调用不会强制上传对象存储。</div>
           </div>
           <div class="stack">
             <div id="mediaGeneratePreview" class="media-preview-empty">生成后的图片、视频或音频会显示在这里。</div>
@@ -673,6 +693,48 @@
         </section>
       </div>
     </div>
+
+    <div id="system" class="view">
+      <section>
+        <div class="section-head">
+          <h2>系统设置</h2>
+          <div class="row button-row">
+            <button id="refreshSystemSettingsBtn">刷新</button>
+            <button id="saveSystemSettingsBtn" class="primary">保存系统设置</button>
+          </div>
+        </div>
+        <div class="content grid">
+          <div class="stack">
+            <div class="notice">API Key 由系统自动生成，供外部调用 /v1 接口鉴权使用。生成后的明文只展示一次，请妥善保存。</div>
+            <div class="row button-row">
+              <button id="generateApiKeyBtn" class="primary">生成 API Key</button>
+              <button id="forgetLocalApiKeyBtn">清除本浏览器 Key</button>
+            </div>
+            <div id="generatedApiKeyBox" class="notice" style="display:none"></div>
+            <div id="apiKeyList" class="stack"></div>
+            <label><input id="objectStorageEnabled" type="checkbox"> 启用对象存储</label>
+            <div class="split">
+              <label>Endpoint<input id="objectStorageEndpoint" placeholder="https://s3.example.com"></label>
+              <label>Region<input id="objectStorageRegion" placeholder="auto"></label>
+            </div>
+            <div class="split">
+              <label>Bucket<input id="objectStorageBucket" placeholder="media"></label>
+              <label>Prefix<input id="objectStoragePrefix" placeholder="gemini-web"></label>
+            </div>
+            <label>Public URL<input id="objectStoragePublicUrl" placeholder="https://cdn.example.com/media"></label>
+          </div>
+          <div class="stack">
+            <div class="split">
+              <label>Access Key ID<input id="objectStorageAccessKey" autocomplete="off"></label>
+              <label>Secret Access Key<input id="objectStorageSecretKey" type="password" autocomplete="new-password" placeholder="保存后会脱敏显示"></label>
+            </div>
+            <label><input id="objectStoragePathStyle" type="checkbox" checked> 使用 Path Style 地址</label>
+            <div id="objectStorageStatus" class="notice">对象存储状态加载中...</div>
+            <details class="raw-json" open><summary>当前设置</summary><pre id="systemSettingsOutput">等待加载...</pre></details>
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
 
   <div id="manualModal" class="modal-backdrop">
@@ -700,11 +762,19 @@
   </div>
 
   <script>
-    const state = { status: null, logs: [], media: [], mediaCooldowns: null, gems: [], jobs: [], files: [], authWindow: null };
+    const state = { status: null, logs: [], media: [], mediaCooldowns: null, gems: [], jobs: [], files: [], mediaFiles: [], systemSettings: null, authWindow: null };
     const $ = id => document.getElementById(id);
 
+    function storedApiKey() { return localStorage.getItem("gemini-api-key") || ""; }
+    function authHeaders(extra = {}) {
+      const headers = { ...extra };
+      const key = storedApiKey();
+      if (key && !headers.Authorization) headers.Authorization = `Bearer ${key}`;
+      return headers;
+    }
     async function api(path, options = {}) {
-      const response = await fetch(path, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
+      const headers = authHeaders({ "Content-Type": "application/json", ...(options.headers || {}) });
+      const response = await fetch(path, { headers, ...options });
       if (!response.ok) {
         let detail = response.statusText;
         try { const data = await response.json(); detail = data.error?.message || data.detail || data.message || detail; } catch (_) {}
@@ -822,6 +892,11 @@
       const data = await api("/v1/gemini/jobs?job_type=deep_research&limit=40");
       state.jobs = data.jobs || [];
       renderJobs();
+    }
+    async function refreshSystemSettings() {
+      const data = await api("/v1/system-settings");
+      state.systemSettings = data;
+      renderSystemSettings();
     }
     function renderMetrics() {
       const accounts = state.status?.accounts || [];
@@ -1011,6 +1086,31 @@
         <div class="item"><b>${esc(j.job_id)}</b><span class="hint">${esc(j.state)} / ${esc(j.prompt || "")}</span><button data-job-id="${esc(j.job_id)}">选中</button></div>
       `).join("") : `<div class="hint">还没有 Deep Research 任务。</div>`;
     }
+    function renderSystemSettings() {
+      const settings = state.systemSettings?.settings || {};
+      const storage = settings.object_storage || {};
+      $("apiKeyList").innerHTML = (settings.api_keys || []).length ? (settings.api_keys || []).map(key => `
+        <div class="item">
+          <div class="row"><b>${esc(key.masked || "-")}</b><span class="pill">${esc(key.fingerprint || "")}</span></div>
+          <div class="hint">外部调用使用 Authorization: Bearer ${esc(key.masked || "")}</div>
+          <button class="danger" data-delete-api-key="${esc(key.fingerprint || "")}">吊销</button>
+        </div>
+      `).join("") : `<div class="hint">还没有管理端生成的 API Key。</div>`;
+      $("objectStorageEnabled").checked = Boolean(storage.enabled);
+      $("objectStorageEndpoint").value = storage.endpoint || "";
+      $("objectStorageRegion").value = storage.region || "auto";
+      $("objectStorageBucket").value = storage.bucket || "";
+      $("objectStoragePrefix").value = storage.prefix || "gemini-web";
+      $("objectStoragePublicUrl").value = storage.public_url || "";
+      $("objectStorageAccessKey").value = storage.access_key_id || "";
+      $("objectStorageSecretKey").value = storage.secret_access_key || "";
+      $("objectStoragePathStyle").checked = storage.force_path_style !== false;
+      $("objectStorageStatus").className = `notice ${state.systemSettings?.object_storage_ready ? "" : "warning"}`.trim();
+      $("objectStorageStatus").textContent = state.systemSettings?.object_storage_ready
+        ? "对象存储配置完整，管理端媒体生成会优先上传到对象存储。"
+        : "对象存储尚未配置完整，管理端媒体生成会回退到本地缓存。";
+      showJson("systemSettingsOutput", state.systemSettings || {});
+    }
     function mediaKindLabel(kind) {
       return { image: "图片", web_image: "网页图片", video: "视频", audio: "音频", media: "媒体" }[kind] || kind || "媒体";
     }
@@ -1022,13 +1122,14 @@
       const url = playableMediaUrl(item);
       const title = item.title || `${mediaKindLabel(kind)} #${item.id ?? index + 1}`;
       const thumb = item.thumbnail && item.thumbnail !== url ? item.thumbnail : "";
-      const canInline = item.cached || !item.id;
+      const trustedInline = item.cached || item.stored || !item.id || kind === "video";
+      const canInline = Boolean(url && trustedInline);
       const preview = !canInline
         ? `<div class="media-preview-empty">历史媒体未缓存，点击下方链接尝试通过账户代理打开。</div>`
         : kind === "image" || kind === "web_image"
-          ? `<img src="${esc(url)}" alt="${esc(title)}" loading="lazy">`
+          ? `<div class="media-preview"><img src="${esc(url)}" alt="${esc(title)}" loading="lazy"></div>`
           : kind === "video"
-            ? `<video src="${esc(url)}" controls preload="metadata" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>`
+            ? `<div class="media-preview"><video src="${esc(url)}" controls preload="metadata" ${thumb ? `poster="${esc(thumb)}"` : ""}></video></div>`
             : kind === "audio"
               ? `<audio src="${esc(url)}" controls preload="metadata"></audio>`
               : `<div class="media-preview-empty">暂不支持内嵌预览，可打开结果查看。</div>`;
@@ -1107,8 +1208,29 @@
         mode: $("mediaGenerateKind").value,
         temporary: true,
         deep_research: false,
-        file_ids: [],
+        store_media: true,
+        file_ids: state.mediaFiles.map(f => f.id),
       };
+    }
+    async function uploadSelectedFiles(inputId, targetKey, infoId) {
+      const files = [...$(inputId).files];
+      if (!files.length) return setMsg("请选择参考附件");
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/v1/gemini/files", { method: "POST", headers: authHeaders(), body: form });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        state[targetKey].push(data.file);
+      }
+      $(inputId).value = "";
+      $(infoId).textContent = state[targetKey].map(f => f.filename).join(", ");
+      setMsg(`已上传 ${files.length} 个参考附件`);
+    }
+    function clearUploadedFiles(targetKey, infoId) {
+      state[targetKey] = [];
+      $(infoId).textContent = "";
+      setMsg("已清空参考附件");
     }
 
     document.querySelectorAll("nav button").forEach(btn => btn.onclick = () => {
@@ -1116,6 +1238,7 @@
       document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === btn.dataset.tab));
       if (btn.dataset.tab === "gems") refreshGems().catch(e => setMsg(e.message));
       if (btn.dataset.tab === "media") refreshMedia().catch(e => setMsg(e.message));
+      if (btn.dataset.tab === "system") refreshSystemSettings().catch(e => setMsg(e.message));
     });
     document.body.onclick = event => {
       const close = event.target.closest("[data-close-modal]");
@@ -1159,7 +1282,7 @@
     $("nativeStreamBtn").onclick = async () => {
       try {
         $("nativeOutput").textContent = "";
-        const res = await fetch("/v1/gemini/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(await nativePayload()) });
+        const res = await fetch("/v1/gemini/stream", { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(await nativePayload()) });
         const text = await res.text();
         $("nativeOutput").textContent = text;
         await refreshAll();
@@ -1179,16 +1302,51 @@
         showJson("mediaGenerateOutput", e.message);
       }
     };
-    $("uploadFileBtn").onclick = async () => {
-      const file = $("nativeFile").files[0];
-      if (!file) return setMsg("请选择附件");
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/v1/gemini/files", { method: "POST", body: form });
-      if (!res.ok) return setMsg(await res.text());
-      const data = await res.json();
-      state.files.push(data.file);
-      $("fileInfo").textContent = state.files.map(f => f.filename).join(", ");
+    $("uploadFileBtn").onclick = () => uploadSelectedFiles("nativeFile", "files", "fileInfo").catch(e => setMsg(e.message));
+    $("clearFilesBtn").onclick = () => clearUploadedFiles("files", "fileInfo");
+    $("mediaUploadFileBtn").onclick = () => uploadSelectedFiles("mediaGenerateFile", "mediaFiles", "mediaFileInfo").catch(e => setMsg(e.message));
+    $("mediaClearFilesBtn").onclick = () => clearUploadedFiles("mediaFiles", "mediaFileInfo");
+    $("refreshSystemSettingsBtn").onclick = () => refreshSystemSettings().catch(e => setMsg(e.message));
+    $("generateApiKeyBtn").onclick = async () => {
+      const data = await api("/v1/system-settings/api-keys", { method: "POST", body: "{}" });
+      localStorage.setItem("gemini-api-key", data.api_key);
+      state.systemSettings = { ...state.systemSettings, settings: data.settings };
+      $("generatedApiKeyBox").style.display = "block";
+      $("generatedApiKeyBox").innerHTML = `新 API Key：<code>${esc(data.api_key)}</code><div class="hint">明文只显示这一次，当前浏览器已自动保存用于管理端访问。</div>`;
+      renderSystemSettings();
+      setMsg("API Key 已生成");
+    };
+    $("forgetLocalApiKeyBtn").onclick = () => {
+      localStorage.removeItem("gemini-api-key");
+      setMsg("已清除本浏览器保存的 API Key");
+    };
+    $("apiKeyList").onclick = async event => {
+      const btn = event.target.closest("[data-delete-api-key]");
+      if (!btn) return;
+      if (!confirm("确认吊销这个 API Key？")) return;
+      const data = await api(`/v1/system-settings/api-keys/${encodeURIComponent(btn.dataset.deleteApiKey)}`, { method: "DELETE" });
+      state.systemSettings = { ...state.systemSettings, settings: data.settings };
+      renderSystemSettings();
+      setMsg(data.deleted ? "API Key 已吊销" : "没有找到对应 API Key");
+    };
+    $("saveSystemSettingsBtn").onclick = async () => {
+      const payload = {
+        object_storage: {
+          enabled: $("objectStorageEnabled").checked,
+          endpoint: $("objectStorageEndpoint").value.trim(),
+          region: $("objectStorageRegion").value.trim() || "auto",
+          bucket: $("objectStorageBucket").value.trim(),
+          access_key_id: $("objectStorageAccessKey").value.trim(),
+          secret_access_key: $("objectStorageSecretKey").value.trim(),
+          prefix: $("objectStoragePrefix").value.trim() || "gemini-web",
+          public_url: $("objectStoragePublicUrl").value.trim(),
+          force_path_style: $("objectStoragePathStyle").checked,
+        },
+      };
+      const data = await api("/v1/system-settings", { method: "PATCH", body: JSON.stringify(payload) });
+      state.systemSettings = data;
+      renderSystemSettings();
+      setMsg("系统设置已保存");
     };
     $("gemList").onclick = event => {
       const btn = event.target.closest("[data-gem-id]");

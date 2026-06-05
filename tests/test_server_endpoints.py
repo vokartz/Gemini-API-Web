@@ -43,6 +43,29 @@ class FakeNoVncClient:
         return FakeNoVncResponse()
 
 
+class FakeMediaResponse:
+    headers = {"content-type": "image/png"}
+    content = b"image-bytes"
+
+    def raise_for_status(self):
+        return None
+
+
+class FakeMediaHTTPClient:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def get(self, url):
+        return FakeMediaResponse()
+
+
 class ServerEndpointTests(unittest.TestCase):
     def _config(self, tmp: str) -> ServerConfig:
         return ServerConfig(
@@ -289,6 +312,157 @@ class ServerEndpointTests(unittest.TestCase):
                     for log in logs
                 )
             )
+
+    def test_system_settings_api_keys_are_dynamic_and_masked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(self._config(tmp))
+            with TestClient(app) as client:
+                response = client.patch(
+                    "/v1/system-settings",
+                    json={
+                        "api_keys": ["sk-local-secret"],
+                        "object_storage": {
+                            "enabled": True,
+                            "endpoint": "https://s3.example.test",
+                            "region": "auto",
+                            "bucket": "media",
+                            "access_key_id": "access",
+                            "secret_access_key": "secret-value",
+                            "prefix": "gemini-web",
+                            "public_url": "https://cdn.example.test/media",
+                            "force_path_style": True,
+                        },
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+                self.assertEqual(data["settings"]["api_keys"][0]["masked"], "sk-l...cret")
+                fingerprint = data["settings"]["api_keys"][0]["fingerprint"]
+                self.assertTrue(fingerprint)
+                self.assertEqual(
+                    data["settings"]["object_storage"]["secret_access_key"],
+                    "secr...alue",
+                )
+                self.assertTrue(data["object_storage_ready"])
+
+                unauthorized = client.get("/v1/request-logs")
+                self.assertEqual(unauthorized.status_code, 401)
+                authorized = client.get(
+                    "/v1/request-logs",
+                    headers={"Authorization": "Bearer sk-local-secret"},
+                )
+                self.assertEqual(authorized.status_code, 200)
+
+                generated = client.post(
+                    "/v1/system-settings/api-keys",
+                    headers={"Authorization": "Bearer sk-local-secret"},
+                    json={},
+                )
+                self.assertEqual(generated.status_code, 200)
+                generated_key = generated.json()["api_key"]
+                self.assertTrue(generated_key.startswith("sk-gemini-"))
+                generated_fp = generated.json()["fingerprint"]
+                self.assertEqual(
+                    client.get(
+                        "/v1/request-logs",
+                        headers={"Authorization": f"Bearer {generated_key}"},
+                    ).status_code,
+                    200,
+                )
+                deleted = client.delete(
+                    f"/v1/system-settings/api-keys/{generated_fp}",
+                    headers={"Authorization": "Bearer sk-local-secret"},
+                )
+                self.assertEqual(deleted.status_code, 200)
+                self.assertEqual(deleted.json()["deleted"], 1)
+
+    def test_console_media_generation_can_store_media_to_object_storage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(self._config(tmp))
+
+            async def fake_init(self, *args, **kwargs):
+                self.client = FakeSession()
+                self.account_status = AccountStatus.AVAILABLE
+
+            async def fake_close(self):
+                self.client = None
+
+            async def fake_generate_content(self, prompt, **kwargs):
+                return ModelOutput(
+                    metadata=["cid", "rid"],
+                    candidates=[
+                        Candidate(
+                            rcid="rcid",
+                            text="ok",
+                            generated_images=[
+                                GeneratedImage(
+                                    url="https://lh3.googleusercontent.com/demo.png",
+                                    title="generated",
+                                )
+                            ],
+                        )
+                    ],
+                )
+
+            async def fake_upload(**kwargs):
+                return {
+                    "url": "https://cdn.example.test/tmp-assets/gemini-web/image.png",
+                    "key": "tmp-assets/gemini-web/image.png",
+                    "size": len(kwargs["data"]),
+                    "content_type": kwargs["content_type"],
+                }
+
+            with (
+                patch.object(GeminiClient, "init", fake_init),
+                patch.object(GeminiClient, "close", fake_close),
+                patch.object(GeminiClient, "generate_content", fake_generate_content),
+                patch("gemini_webapi.server.app.httpx.Client", FakeMediaHTTPClient),
+                patch("gemini_webapi.server.app.upload_s3_compatible", fake_upload),
+                TestClient(app) as client,
+            ):
+                app.state.store.upsert_account(
+                    secure_1psid="psid-one",
+                    cookies={"__Secure-1PSID": "psid-one"},
+                    name="one",
+                )
+                app.state.store.set_json_state(
+                    "system_settings",
+                    {
+                        "api_keys": [],
+                        "object_storage": {
+                            "enabled": True,
+                            "endpoint": "https://s3.example.test",
+                            "region": "auto",
+                            "bucket": "media",
+                            "access_key_id": "access",
+                            "secret_access_key": "secret",
+                            "prefix": "gemini-web",
+                            "public_url": "https://cdn.example.test",
+                            "force_path_style": True,
+                        },
+                    },
+                )
+                response = client.post(
+                    "/v1/gemini/generate",
+                    json={
+                        "prompt": "make image",
+                        "mode": "image",
+                        "store_media": True,
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                media = client.get("/v1/gemini/media").json()["media"][0]
+                self.assertTrue(media["stored"])
+                self.assertEqual(
+                    media["url"],
+                    "https://cdn.example.test/tmp-assets/gemini-web/image.png",
+                )
+                self.assertEqual(media["content_url"], media["url"])
+                self.assertEqual(
+                    media["metadata"]["original_url"],
+                    "https://lh3.googleusercontent.com/demo.png",
+                )
 
     def test_gemini_generate_media_mode_requires_media_result(self):
         with tempfile.TemporaryDirectory() as tmp:

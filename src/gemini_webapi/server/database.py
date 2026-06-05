@@ -554,6 +554,21 @@ class AccountStore:
         )
         self.conn.commit()
 
+    def get_json_state(self, key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+        """读取 JSON 格式的运行时配置，损坏时返回默认值以保证服务可启动。"""
+        raw = self.get_state(key)
+        if not raw:
+            return dict(default or {})
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return dict(default or {})
+        return value if isinstance(value, dict) else dict(default or {})
+
+    def set_json_state(self, key: str, value: dict[str, Any]) -> None:
+        """保存 JSON 格式的运行时配置，统一使用 SQLite 持久化系统设置。"""
+        self.set_state(key, json.dumps(value, ensure_ascii=True, sort_keys=True))
+
     def mark_success(self, account_id: int) -> None:
         self.conn.execute(
             """

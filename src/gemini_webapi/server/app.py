@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 import asyncio
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from urllib.parse import urlparse
 
 import orjson as json
 import websockets
+import httpx
 from curl_cffi.requests import AsyncSession
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -30,6 +32,11 @@ from ..types import DeepResearchPlan
 from .auth_browser import AuthBrowserManager, AuthBrowserUnavailable
 from .config import ServerConfig
 from .database import AccountStore
+from .object_storage import (
+    ObjectStorageConfig,
+    build_media_object_key,
+    upload_s3_compatible,
+)
 from .rotator import AccountRotator
 
 
@@ -42,6 +49,22 @@ MEDIA_CONTENT_ALLOWED_HOST_SUFFIXES = (
     ".googlevideo.com",
     "storage.googleapis.com",
 )
+SYSTEM_SETTINGS_KEY = "system_settings"
+MASKED_SECRET = "********"
+DEFAULT_SYSTEM_SETTINGS = {
+    "api_keys": [],
+    "object_storage": {
+        "enabled": False,
+        "endpoint": "",
+        "region": "auto",
+        "bucket": "",
+        "access_key_id": "",
+        "secret_access_key": "",
+        "prefix": "gemini-web",
+        "public_url": "",
+        "force_path_style": True,
+    },
+}
 
 
 class GenerateRequest(BaseModel):
@@ -56,6 +79,7 @@ class GeminiGenerateRequest(BaseModel):
     model: str | None = None
     mode: str | None = None
     temporary: bool = False
+    store_media: bool = False
     gem: str | None = None
     gem_id: str | None = None
     gem_name: str | None = None
@@ -112,6 +136,23 @@ class SwitchAccountRequest(BaseModel):
 
 class ClearMediaCooldownRequest(BaseModel):
     kind: str | None = None
+
+
+class ObjectStorageSettings(BaseModel):
+    enabled: bool = False
+    endpoint: str = ""
+    region: str = "auto"
+    bucket: str = ""
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    prefix: str = "gemini-web"
+    public_url: str = ""
+    force_path_style: bool = True
+
+
+class SystemSettingsRequest(BaseModel):
+    api_keys: list[str] | None = None
+    object_storage: ObjectStorageSettings | None = None
 
 
 class AuthClickRequest(BaseModel):
@@ -610,10 +651,104 @@ def _media_record_dict(item: Any) -> dict[str, Any]:
     data = item.__dict__.copy()
     if "token" not in data and hasattr(item, "token"):
         data["token"] = getattr(item, "token")
+    storage = (data.get("metadata") or {}).get("object_storage") or {}
     if data.get("token"):
-        data["content_url"] = f"/v1/gemini/media/{data['token']}/content"
+        data["content_url"] = (
+            storage.get("url") or f"/v1/gemini/media/{data['token']}/content"
+        )
         data["cached"] = bool(data.get("local_path"))
+        data["stored"] = bool(storage.get("url"))
     return data
+
+
+def _mask_secret(value: str | None) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return MASKED_SECRET
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _key_fingerprint(value: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, value).hex[:16]
+
+
+def _normalize_api_keys(values: list[str] | tuple[str, ...] | None) -> list[str]:
+    seen: set[str] = set()
+    keys: list[str] = []
+    for value in values or []:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        keys.append(item)
+    return keys
+
+
+def _resolve_masked_api_keys(
+    incoming: list[str] | None,
+    existing: list[str],
+) -> list[str]:
+    """前端会显示脱敏 API Key；保存时匹配脱敏值并保留原始密钥。"""
+    resolved: list[str] = []
+    masks = {_mask_secret(key): key for key in existing}
+    for value in incoming or []:
+        item = str(value or "").strip()
+        if not item:
+            continue
+        resolved.append(masks.get(item, item))
+    return _normalize_api_keys(resolved)
+
+
+def _merge_system_settings(
+    current: dict[str, Any],
+    request: SystemSettingsRequest | None = None,
+) -> dict[str, Any]:
+    merged = {
+        "api_keys": _normalize_api_keys(current.get("api_keys")),
+        "object_storage": {
+            **DEFAULT_SYSTEM_SETTINGS["object_storage"],
+            **(current.get("object_storage") or {}),
+        },
+    }
+    if request is None:
+        return merged
+    if request.api_keys is not None:
+        merged["api_keys"] = _resolve_masked_api_keys(
+            request.api_keys,
+            merged["api_keys"],
+        )
+    if request.object_storage is not None:
+        incoming = request.object_storage.model_dump()
+        current_secret = merged["object_storage"].get("secret_access_key", "")
+        if incoming.get("secret_access_key") in {
+            MASKED_SECRET,
+            _mask_secret(current_secret),
+        }:
+            incoming["secret_access_key"] = merged["object_storage"].get(
+                "secret_access_key",
+                "",
+            )
+        merged["object_storage"] = {
+            **merged["object_storage"],
+            **incoming,
+        }
+    return merged
+
+
+def _public_system_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    public = _merge_system_settings(settings)
+    public["api_keys"] = [
+        {
+            "fingerprint": _key_fingerprint(key),
+            "masked": _mask_secret(key),
+        }
+        for key in public["api_keys"]
+    ]
+    storage = dict(public["object_storage"])
+    storage["secret_access_key"] = _mask_secret(storage.get("secret_access_key"))
+    public["object_storage"] = storage
+    return public
 
 
 def _media_cooldown_summary(status: dict[str, Any]) -> dict[str, Any]:
@@ -696,7 +831,6 @@ def _gem_dict(gem: Any) -> dict[str, Any]:
 
 
 def create_app(config: ServerConfig | None = None):
-    import httpx
     import orjson as json
     from pathlib import Path
 
@@ -749,14 +883,18 @@ def create_app(config: ServerConfig | None = None):
 
     @app.middleware("http")
     async def bearer_auth(request: Request, call_next):
+        system_settings = _merge_system_settings(
+            store.get_json_state(SYSTEM_SETTINGS_KEY, DEFAULT_SYSTEM_SETTINGS)
+        )
+        allowed_api_keys = set(config.api_keys) | set(system_settings["api_keys"])
         if (
-            config.api_keys
+            allowed_api_keys
             and request.url.path.startswith("/v1/")
             and request.url.path != "/v1/status"
         ):
             auth = request.headers.get("authorization", "")
             token = auth.removeprefix("Bearer ").strip()
-            if token not in config.api_keys:
+            if token not in allowed_api_keys:
                 return JSONResponse(
                     status_code=401,
                     content=_openai_error(
@@ -909,6 +1047,61 @@ def create_app(config: ServerConfig | None = None):
         )
         return {"ok": True, "settings": await get_settings()}
 
+    @app.get("/v1/system-settings")
+    async def get_system_settings() -> dict[str, Any]:
+        settings = _merge_system_settings(
+            store.get_json_state(SYSTEM_SETTINGS_KEY, DEFAULT_SYSTEM_SETTINGS)
+        )
+        return {
+            "ok": True,
+            "settings": _public_system_settings(settings),
+            "object_storage_ready": ObjectStorageConfig.from_dict(
+                settings["object_storage"]
+            ).usable(),
+        }
+
+    @app.patch("/v1/system-settings")
+    async def update_system_settings(request: SystemSettingsRequest) -> dict[str, Any]:
+        current = store.get_json_state(SYSTEM_SETTINGS_KEY, DEFAULT_SYSTEM_SETTINGS)
+        settings = _merge_system_settings(current, request)
+        store.set_json_state(SYSTEM_SETTINGS_KEY, settings)
+        return {
+            "ok": True,
+            "settings": _public_system_settings(settings),
+            "object_storage_ready": ObjectStorageConfig.from_dict(
+                settings["object_storage"]
+            ).usable(),
+        }
+
+    @app.post("/v1/system-settings/api-keys")
+    async def create_system_api_key() -> dict[str, Any]:
+        current = store.get_json_state(SYSTEM_SETTINGS_KEY, DEFAULT_SYSTEM_SETTINGS)
+        settings = _merge_system_settings(current)
+        api_key = f"sk-gemini-{secrets.token_urlsafe(32)}"
+        settings["api_keys"] = _normalize_api_keys([*settings["api_keys"], api_key])
+        store.set_json_state(SYSTEM_SETTINGS_KEY, settings)
+        return {
+            "ok": True,
+            "api_key": api_key,
+            "fingerprint": _key_fingerprint(api_key),
+            "settings": _public_system_settings(settings),
+        }
+
+    @app.delete("/v1/system-settings/api-keys/{fingerprint}")
+    async def delete_system_api_key(fingerprint: str) -> dict[str, Any]:
+        current = store.get_json_state(SYSTEM_SETTINGS_KEY, DEFAULT_SYSTEM_SETTINGS)
+        settings = _merge_system_settings(current)
+        before = len(settings["api_keys"])
+        settings["api_keys"] = [
+            key for key in settings["api_keys"] if _key_fingerprint(key) != fingerprint
+        ]
+        store.set_json_state(SYSTEM_SETTINGS_KEY, settings)
+        return {
+            "ok": True,
+            "deleted": before - len(settings["api_keys"]),
+            "settings": _public_system_settings(settings),
+        }
+
     @app.get("/v1/request-logs")
     async def request_logs(limit: int = 80) -> dict[str, Any]:
         return {"logs": rotator.request_logs(limit=max(1, min(limit, 500)))}
@@ -1028,7 +1221,7 @@ def create_app(config: ServerConfig | None = None):
             "audio": ".mp3",
         }.get(kind, ".bin")
 
-    def _cache_media_item(item: dict[str, Any]) -> dict[str, Any]:
+    def _download_media_item(item: dict[str, Any]) -> dict[str, Any]:
         url = item.get("url") or ""
         if not url or not _media_host_allowed(url):
             return {}
@@ -1036,50 +1229,110 @@ def create_app(config: ServerConfig | None = None):
             account = store.get_account(rotator.status()["current_account_id"])
             cookies = account.cookies if account else None
             with httpx.Client(timeout=120, follow_redirects=True, cookies=cookies) as client:
-                with client.stream("GET", url) as response:
-                    response.raise_for_status()
-                    content_type = response.headers.get("content-type")
-                    if not _media_content_type_allowed(item.get("kind"), content_type):
-                        return {}
-                    suffix = _media_file_suffix(item.get("kind", "media"), content_type, url)
-                    cache_dir = Path(config.database_path).resolve().parent / "media-cache"
-                    cache_dir.mkdir(parents=True, exist_ok=True)
-                    dest = cache_dir / f"{uuid.uuid4().hex}{suffix}"
-                    size = 0
-                    with dest.open("wb") as fh:
-                        for chunk in response.iter_bytes():
-                            if not chunk:
-                                continue
-                            size += len(chunk)
-                            if size > MEDIA_CONTENT_MAX_BYTES:
-                                fh.close()
-                                dest.unlink(missing_ok=True)
-                                return {}
-                            fh.write(chunk)
-            return {"path": str(dest), "content_type": content_type, "size": size}
+                response = client.get(url)
+                response.raise_for_status()
+            content_type = response.headers.get("content-type")
+            if not _media_content_type_allowed(item.get("kind"), content_type):
+                return {}
+            content = response.content
+            if len(content) > MEDIA_CONTENT_MAX_BYTES:
+                return {}
+            return {
+                "content": content,
+                "content_type": content_type,
+                "size": len(content),
+            }
         except Exception:
             return {}
 
-    def _save_media_index(
+    def _cache_downloaded_media(item: dict[str, Any], downloaded: dict[str, Any]) -> dict[str, Any]:
+        content = downloaded.get("content")
+        if not content:
+            return {}
+        try:
+            url = item.get("url") or ""
+            content_type = downloaded.get("content_type")
+            suffix = _media_file_suffix(item.get("kind", "media"), content_type, url)
+            cache_dir = Path(config.database_path).resolve().parent / "media-cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            dest = cache_dir / f"{uuid.uuid4().hex}{suffix}"
+            dest.write_bytes(content)
+            return {
+                "path": str(dest),
+                "content_type": content_type,
+                "size": downloaded.get("size") or len(content),
+            }
+        except Exception:
+            return {}
+
+    async def _upload_media_to_object_storage(
+        item: dict[str, Any],
+        downloaded: dict[str, Any],
+    ) -> dict[str, Any]:
+        settings = _merge_system_settings(
+            store.get_json_state(SYSTEM_SETTINGS_KEY, DEFAULT_SYSTEM_SETTINGS)
+        )
+        storage_config = ObjectStorageConfig.from_dict(settings["object_storage"])
+        content = downloaded.get("content")
+        if not storage_config.usable() or not content:
+            return {}
+        content_type = downloaded.get("content_type") or "application/octet-stream"
+        category = {
+            "image": "gemini/images",
+            "web_image": "gemini/images",
+            "video": "gemini/videos",
+            "audio": "gemini/audio",
+        }.get(item.get("kind"), "gemini/media")
+        key = build_media_object_key(
+            prefix=storage_config.prefix,
+            category=category,
+            data=content,
+            content_type=content_type,
+            source_url=item.get("url") or "",
+        )
+        return await upload_s3_compatible(
+            config=storage_config,
+            key=key,
+            data=content,
+            content_type=content_type,
+        )
+
+    async def _save_media_index(
         *,
         request_id: str,
         account_id: int | None,
         output: Any,
+        store_media: bool = False,
     ) -> int:
         count = 0
         for item in _media_entries(output):
-            cache = _cache_media_item(item)
+            downloaded = _download_media_item(item)
+            cache: dict[str, Any] = {}
+            storage: dict[str, Any] = {}
+            if store_media and downloaded:
+                try:
+                    storage = await _upload_media_to_object_storage(item, downloaded)
+                except Exception as exc:
+                    storage = {"error": str(exc)}
+            if not storage.get("url"):
+                cache = _cache_downloaded_media(item, downloaded)
+            metadata = {
+                **item,
+                "original_url": item["url"],
+            }
+            if storage:
+                metadata["object_storage"] = storage
             store.add_media_output(
                 request_id=request_id,
                 account_id=account_id,
                 kind=item["kind"],
                 title=item.get("title"),
-                url=item["url"],
+                url=storage.get("url") or item["url"],
                 thumbnail=item.get("thumbnail"),
                 local_path=cache.get("path"),
                 local_content_type=cache.get("content_type"),
                 local_size=cache.get("size"),
-                metadata=item,
+                metadata=metadata,
             )
             count += 1
         return count
@@ -1123,8 +1376,11 @@ def create_app(config: ServerConfig | None = None):
             raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
 
         account_id = rotator.status()["current_account_id"]
-        media_count = _save_media_index(
-            request_id=request_id, account_id=account_id, output=output
+        media_count = await _save_media_index(
+            request_id=request_id,
+            account_id=account_id,
+            output=output,
+            store_media=request.store_media,
         )
         if media_count:
             store.update_request_log_media_count(request_id, media_count)
@@ -1221,10 +1477,11 @@ def create_app(config: ServerConfig | None = None):
                     yield "data: [DONE]\n\n"
                     return
                 account_id = rotator.status()["current_account_id"]
-                media_count = _save_media_index(
+                media_count = await _save_media_index(
                     request_id=request_id,
                     account_id=account_id,
                     output=final_output,
+                    store_media=request.store_media,
                 )
                 if media_count:
                     store.update_request_log_media_count(request_id, media_count)
