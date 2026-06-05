@@ -22,8 +22,8 @@ from .database import Account, AccountStore
 
 T = TypeVar("T")
 MEDIA_GENERATION_MODES = {"audio", "image", "video"}
-# Gemini Web 端媒体额度现在更偏向短窗口恢复。自用场景只做冷却保护，
-# 避免某个账号额度不足时持续重试，不引入支付或硬额度系统。
+# Gemini Web medya kotası artık kısa pencereli geri yüklemeyi tercih etmektedir. Kişisel kullanım senaryolarında yalnızca soğutma koruması yapılır;
+# bir hesabın kotası yetersiz olduğunda sürekli tekrar denenmez, ödeme veya sabit kota sistemi devreye sokulmaz.
 MEDIA_LIMIT_COOLDOWN_SECONDS = 5 * 60 * 60
 MEDIA_LIMIT_ERROR_MARKERS = (
     "limit",
@@ -32,9 +32,10 @@ MEDIA_LIMIT_ERROR_MARKERS = (
     "too many",
     "usage limit",
     "limit reached",
-    "额度",
-    "上限",
-    "次数",
+    "kota",
+    "aşım",
+    "sınır",
+    "limit aşıldı",
 )
 
 

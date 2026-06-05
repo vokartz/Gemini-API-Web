@@ -66,7 +66,7 @@ def build_media_object_key(
     content_type: str | None,
     source_url: str = "",
 ) -> str:
-    """生成媒体对象路径；tmp-assets 方便对象存储生命周期规则自动清理。"""
+    """Medya nesnesi yolunu oluşturur; tmp-assets, nesne depolama yaşam döngüsü kurallarıyla otomatik temizlemeyi kolaylaştırır."""
     now = datetime.now(timezone.utc)
     digest = hashlib.sha256(data).hexdigest()[:24]
     suffix = _media_suffix(content_type, source_url)
@@ -88,7 +88,7 @@ async def upload_s3_compatible(
     content_type: str,
     timeout: float = 120,
 ) -> dict[str, Any]:
-    """上传到 S3 兼容对象存储，使用 AWS Signature V4 签名。"""
+    """AWS Signature V4 imzası kullanarak S3 uyumlu nesne depolamasına yükler."""
     if not config.usable():
         raise ValueError("object storage is not fully configured")
     parsed = urlparse(config.endpoint)

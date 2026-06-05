@@ -275,7 +275,7 @@ class AccountStore:
         )
 
     def _backfill_request_log_media_counts(self) -> None:
-        """按 request_id 回填旧媒体日志的实际媒体数量。"""
+        """request_id ile eski medya günlüklerindeki gerçek medya sayısını geri doldurur."""
         self.conn.execute(
             """
             UPDATE request_logs
@@ -555,7 +555,7 @@ class AccountStore:
         self.conn.commit()
 
     def get_json_state(self, key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
-        """读取 JSON 格式的运行时配置，损坏时返回默认值以保证服务可启动。"""
+        """JSON biçimindeki çalışma zamanı yapılandırmasını okur; bozulmuşsa hizmetin başlatılabilmesini sağlamak için varsayılan değeri döndürür."""
         raw = self.get_state(key)
         if not raw:
             return dict(default or {})
@@ -566,7 +566,7 @@ class AccountStore:
         return value if isinstance(value, dict) else dict(default or {})
 
     def set_json_state(self, key: str, value: dict[str, Any]) -> None:
-        """保存 JSON 格式的运行时配置，统一使用 SQLite 持久化系统设置。"""
+        """JSON biçimindeki çalışma zamanı yapılandırmasını kaydeder; sistem ayarlarını SQLite ile birleşik olarak kalıcı hale getirir."""
         self.set_state(key, json.dumps(value, ensure_ascii=True, sort_keys=True))
 
     def mark_success(self, account_id: int) -> None:
@@ -861,7 +861,7 @@ class AccountStore:
         cooldown = self._row_to_media_cooldown(row)
         if self._media_cooldown_is_active(cooldown.blocked_until):
             return cooldown
-        # 冷却窗口到期后立即清理，避免前端和后续轮换继续看到旧状态。
+        # Soğutma penceresi sona erdiğinde hemen temizlenir; ön yüzün ve sonraki rotasyonun eski durumu görmeye devam etmemesi için.
         self.clear_media_cooldown(account_id, kind)
         return None
 

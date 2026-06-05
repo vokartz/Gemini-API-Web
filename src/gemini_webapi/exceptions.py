@@ -40,7 +40,7 @@ class ImageGenerationError(APIError):
 
 class MediaGenerationEmptyResult(APIError):
     """
-    媒体生成请求上游已返回，但响应中没有对应的图片、视频或音频结果。
+    Medya oluşturma isteği üst sunucudan döndü, ancak yanıtta karşılık gelen resim, video veya ses sonucu yok.
     """
 
     pass

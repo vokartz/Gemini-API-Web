@@ -269,7 +269,7 @@ def _message_content_to_text(content: str | list[dict[str, Any]] | None) -> str:
         if item_type in {"text", "input_text"} and isinstance(item.get("text"), str):
             parts.append(item["text"])
         elif item_type in {"image_url", "input_image"}:
-            # OpenAI 多模态消息里的图片 URL 转成明确的文本引用，避免外部客户端传图时被静默丢弃。
+            # OpenAI çok modlu mesajlardaki resim URL'si açık bir metin referansına dönüştürülür; harici istemciler resim gönderdiğinde sessizce atlanmaz.
             image_url = item.get("image_url")
             url = ""
             if isinstance(image_url, str):
@@ -312,7 +312,7 @@ def _messages_to_prompt(messages: list[ChatMessage]) -> str:
 
 
 def _responses_input_to_messages(input_value: str | list[Any]) -> list[ChatMessage]:
-    """将 OpenAI Responses API 的 input 字段转换成现有 Chat Completions 消息。"""
+    """OpenAI Responses API'nin input alanını mevcut Chat Completions mesajlarına dönüştürür."""
     if isinstance(input_value, str):
         return [ChatMessage(role="user", content=input_value)]
     messages: list[ChatMessage] = []
@@ -339,7 +339,7 @@ def _responses_output(
     text: str,
     created: int | None = None,
 ) -> dict[str, Any]:
-    """返回 OpenAI Responses API 的基础响应结构。"""
+    """OpenAI Responses API'nin temel yanıt yapısını döndürür."""
     output_id = f"msg_{uuid.uuid4().hex}"
     content_id = f"out_{uuid.uuid4().hex}"
     return {
@@ -598,7 +598,7 @@ def _openai_model_ids() -> list[str]:
 
 
 def _openai_model_object(model_id: str, created: int | None = None) -> dict[str, Any]:
-    """返回 OpenAI 兼容模型对象，供模型列表和单模型查询共用。"""
+    """Model listesi ve tekil model sorgusu için ortak kullanılan OpenAI uyumlu model nesnesini döndürür."""
     return {
         "id": model_id,
         "object": "model",
@@ -645,10 +645,10 @@ def _ensure_media_generation_result(output: Any, mode: str | None) -> None:
     }[mode]
     if has_result:
         return
-    labels = {"image": "图片", "video": "视频", "audio": "音频"}
-    # 上游 2xx 但没有媒体结果时必须显式失败，避免调用方把文本/JSON 当成成功媒体任务。
+    labels = {"image": "Resim", "video": "Video", "audio": "Ses"}
+    # Üst sunucu 2xx döndürdü ancak medya sonucu yok; çağıran tarafın metni/JSON'u başarılı medya görevi sanmaması için açıkça başarısız olmalıdır.
     raise MediaGenerationEmptyResult(
-        f"{labels[mode]}生成请求已返回，但响应中没有可用的{labels[mode]}结果。"
+        f"{labels[mode]} oluşturma isteği döndü, ancak yanıtta kullanılabilir {labels[mode]} sonucu yok."
     )
 
 
@@ -792,7 +792,7 @@ def _media_record_dict(item: Any) -> dict[str, Any]:
 
 
 def _public_media_content_path(path: str) -> bool:
-    # OpenAI 图片接口返回的媒体代理链接会被外部客户端直接请求，这里只公开随机 token 的内容下载。
+    # OpenAI resim arayüzünden dönen medya proxy bağlantıları harici istemciler tarafından doğrudan istenebilir; burada yalnızca rastgele token'lı içerik indirme yolu açık bırakılmaktadır.
     return path.startswith("/v1/gemini/media/") and path.endswith("/content")
 
 
@@ -809,7 +809,7 @@ def _key_fingerprint(value: str) -> str:
 
 
 def _admin_secret(config: ServerConfig) -> str:
-    # 管理端会话签名密钥：服务器部署时建议单独配置，避免重启或改密码后会话状态不可控。
+    # Yönetim paneli oturum imzalama anahtarı: Sunucu dağıtımında ayrı olarak yapılandırılması önerilir; yeniden başlatma veya parola değişikliği sonrasında oturum durumunun kontrolden çıkmaması için.
     return (
         config.admin_session_secret
         or config.admin_password
@@ -818,7 +818,7 @@ def _admin_secret(config: ServerConfig) -> str:
 
 
 def _admin_session_value(config: ServerConfig) -> str:
-    # Cookie 中只保存签名后的时间戳，不保存管理员密码本身。
+    # Cookie'de yalnızca imzalanmış zaman damgası saklanır, yönetici parolasının kendisi saklanmaz.
     timestamp = str(int(time.time()))
     signature = hmac.new(
         _admin_secret(config).encode("utf-8"),
@@ -829,7 +829,7 @@ def _admin_session_value(config: ServerConfig) -> str:
 
 
 def _admin_session_valid(config: ServerConfig, value: str | None) -> bool:
-    # 未配置管理员密码时保持本地开发模式，避免默认启动后把用户锁在管理端外。
+    # Yönetici parolası yapılandırılmamışsa yerel geliştirme modunda kalınır; varsayılan başlatmada kullanıcının yönetim panelinin dışında kalmaması için.
     if not config.admin_password or not value:
         return not config.admin_password
     try:
@@ -863,7 +863,7 @@ def _resolve_masked_api_keys(
     incoming: list[str] | None,
     existing: list[str],
 ) -> list[str]:
-    """前端会显示脱敏 API Key；保存时匹配脱敏值并保留原始密钥。"""
+    """Ön yüz maskelenmiş API Key gösterir; kaydetme sırasında maskelenmiş değerle eşleştirilir ve orijinal anahtar korunur."""
     resolved: list[str] = []
     masks = {_mask_secret(key): key for key in existing}
     for value in incoming or []:
@@ -930,7 +930,7 @@ def _media_cooldown_summary(status: dict[str, Any]) -> dict[str, Any]:
     active_accounts = [
         account for account in accounts if account.get("enabled") and not account.get("expired")
     ]
-    labels = {"image": "图片", "video": "视频", "audio": "音频"}
+    labels = {"image": "Resim", "video": "Video", "audio": "Ses"}
     summary: list[dict[str, Any]] = []
     for kind in ("image", "video", "audio"):
         blocked: list[dict[str, Any]] = []
@@ -1062,7 +1062,7 @@ def create_app(config: ServerConfig | None = None):
         store.close()
 
     app = FastAPI(title="gemini-webapi server", version="0.1.0", lifespan=lifespan)
-    # 外部 Web 面板或浏览器 SDK 调用需要 CORS；服务器部署时可通过环境变量收紧来源。
+    # Harici Web paneli veya tarayıcı SDK çağrıları için CORS gereklidir; sunucu dağıtımında izin verilen kaynaklar ortam değişkeniyle daraltılabilir.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(config.cors_allow_origins),
@@ -1089,7 +1089,7 @@ def create_app(config: ServerConfig | None = None):
         path = request.url.path
         if request.method == "OPTIONS":
             return await call_next(request)
-        # 管理端登录只保护控制台和管理接口；OpenAI 兼容接口仍由外部 API Key 鉴权。
+        # Yönetim paneli girişi yalnızca konsolu ve yönetim uç noktalarını korur; OpenAI uyumlu uç noktalar harici API Key ile kimlik doğrulamaya devam eder.
         admin_public_paths = {
             "/health",
             "/v1/admin/status",
@@ -1178,7 +1178,7 @@ def create_app(config: ServerConfig | None = None):
             except httpx.HTTPError as exc:
                 raise HTTPException(
                     status_code=503,
-                    detail="授权浏览器尚未启动，请先在账户设置中点击网页授权。",
+                    detail="Yetkilendirme tarayıcısı henüz başlatılmadı, lütfen önce hesap ayarlarından web yetkilendirmesine tıklayın.",
                 ) from exc
         return Response(
             content=proxied.content,
@@ -1187,7 +1187,7 @@ def create_app(config: ServerConfig | None = None):
         )
 
     async def _proxy_novnc_websocket(websocket: WebSocket) -> None:
-        """把管理端同源 WebSocket 转发到容器内 noVNC，避免授权页跨端口不可用。"""
+        """Yönetim paneliyle aynı kaynaktan gelen WebSocket'i konteyner içindeki noVNC'ye yönlendirir; yetkilendirme sayfasının çapraz port nedeniyle kullanılamamasını önler."""
         await websocket.accept()
         try:
             async with websockets.connect("ws://127.0.0.1:6080/websockify") as upstream:
@@ -1269,7 +1269,7 @@ def create_app(config: ServerConfig | None = None):
         if not config.admin_password:
             return JSONResponse({"ok": True, "enabled": False, "authenticated": True})
         if not hmac.compare_digest(request.password, config.admin_password):
-            raise HTTPException(status_code=401, detail="管理员密码错误。")
+            raise HTTPException(status_code=401, detail="Yönetici şifresi yanlış.")
         response = JSONResponse(
             {"ok": True, "enabled": True, "authenticated": True}
         )
@@ -1454,7 +1454,7 @@ def create_app(config: ServerConfig | None = None):
         return {"files": [_file_dict(item) for item in store.list_files(limit=limit)]}
 
     async def _save_uploaded_file(file: UploadFile) -> Any:
-        # 上传文件统一落到 data/uploads，OpenAI 兼容和 Gemini 原生接口共享同一个 file_id。
+        # Yüklenen dosyalar data/uploads konumuna yazılır; OpenAI uyumlu ve Gemini yerel arayüzü aynı file_id'yi paylaşır.
         file_id = f"file-{uuid.uuid4().hex}"
         upload_dir = Path(config.database_path).resolve().parent / "uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -2122,7 +2122,7 @@ def create_app(config: ServerConfig | None = None):
 
     @app.get("/v1/accounts")
     async def list_accounts() -> dict[str, Any]:
-        """返回账户池列表，便于管理端和调试脚本直接读取。"""
+        """Yönetim paneli ve hata ayıklama betiklerinin doğrudan okuyabileceği hesap havuzu listesini döndürür."""
         status = rotator.status()
         return {
             "ok": True,

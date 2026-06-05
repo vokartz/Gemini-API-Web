@@ -1480,6 +1480,9 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
         pending_markers = (
             "正在生成视频",
             "生成视频",
+            "video oluşturuluyor",
+            "video üretiliyor",
+            "birkac dakika sürebilir",
             "video_gen_chip",
             "this may take a few minutes",
             "come back",
@@ -1497,7 +1500,7 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
 
     @classmethod
     def _extract_video_urls_from_payload(cls, payload: Any) -> list[str]:
-        """递归兜底提取 Gemini 新结构中的视频链接，避免固定下标漂移导致漏取。"""
+        """Gemini yeni yapısındaki video bağlantılarını yinelemeli olarak çıkarır; sabit dizin kayması nedeniyle gözden kaçırılmamasını sağlar."""
         found: list[str] = []
 
         def add_url(value: str) -> None:
@@ -1726,8 +1729,8 @@ class GeminiClient(ChatMixin, GemMixin, ResearchMixin):
                     )
                 )
         if not generated_videos:
-            # Gemini Web 会调整视频结果结构。固定路径取不到时，保守扫描候选
-            # 负载中的真实视频 URL，但过滤 video_gen_chip 等占位提示。
+            # Gemini Web video sonucu yapısını güncelleyebilir. Sabit yol bulunamazsa adayı
+            # yükte gerçek video URL'sini dikkatli tararken video_gen_chip gibi yer tutucu ışaretler filtrelenir.
             fallback_urls = self._extract_video_urls_from_payload(candidate_data)
             if fallback_urls:
                 generated_videos.append(
