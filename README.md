@@ -246,7 +246,7 @@ curl http://localhost:7860/v1/images/generations \
   }'
 ```
 
-`/v1/images/generations` 会调用 Gemini 图片生成模式，并返回本服务的媒体代理链接；当前仅支持 URL 返回，不支持 `response_format=b64_json`。
+`/v1/images/generations` 会调用 Gemini 图片生成模式，并返回本服务的媒体代理链接；当前仅支持 URL 返回，不支持 `response_format=b64_json`。返回的图片 URL 是随机 token 的内容下载地址，外部客户端展示图片时无需再次携带 API Key。
 
 常用模型：
 
@@ -318,6 +318,8 @@ curl http://localhost:7860/v1/gemini/generate \
 - `url`：Gemini 返回的原始地址，可能短期有效或需要账号 Cookie。
 - `content_url`：本服务提供的缓存/代理访问地址，管理端优先使用它预览。
 - `cached`：是否已经缓存到本地 `data/media-cache/`。
+
+`/v1/gemini/media` 媒体历史列表仍受 API Key 或管理员会话保护；只有 `/v1/gemini/media/{media_token}/content` 内容下载链接会按随机 token 公开访问，便于外部 OpenAI 兼容客户端直接预览图片或视频。
 
 查看媒体历史：
 

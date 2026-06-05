@@ -790,6 +790,11 @@ def _media_record_dict(item: Any) -> dict[str, Any]:
     return data
 
 
+def _public_media_content_path(path: str) -> bool:
+    # OpenAI 图片接口返回的媒体代理链接会被外部客户端直接请求，这里只公开随机 token 的内容下载。
+    return path.startswith("/v1/gemini/media/") and path.endswith("/content")
+
+
 def _mask_secret(value: str | None) -> str:
     if not value:
         return ""
@@ -1088,7 +1093,7 @@ def create_app(config: ServerConfig | None = None):
                 "/v1/gemini/stream",
                 "/v1/gemini/media",
                 "/v1/gemini/files",
-            } or path.startswith("/v1/models/") or path.startswith("/v1/gemini/media/")
+            } or path.startswith("/v1/models/") or _public_media_content_path(path)
             if not admin_ok and not external_api_path:
                 return JSONResponse(
                     status_code=401,
@@ -1108,6 +1113,7 @@ def create_app(config: ServerConfig | None = None):
                 "/v1/admin/login",
                 "/v1/admin/logout",
             }
+            and not _public_media_content_path(path)
             and not (
                 config.admin_password
                 and _admin_session_valid(

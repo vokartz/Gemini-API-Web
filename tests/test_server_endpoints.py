@@ -66,6 +66,21 @@ class FakeMediaHTTPClient:
         return FakeMediaResponse()
 
 
+class FakeAsyncMediaSession:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get(self, url, **kwargs):
+        return FakeMediaResponse()
+
+
 class ServerEndpointTests(unittest.TestCase):
     def _config(self, tmp: str) -> ServerConfig:
         return ServerConfig(
@@ -310,7 +325,7 @@ class ServerEndpointTests(unittest.TestCase):
                             text="ok",
                             generated_images=[
                                 GeneratedImage(
-                                    url="https://example.invalid/generated.png",
+                                    url="https://lh3.googleusercontent.com/generated.png",
                                     title="generated",
                                 )
                             ],
@@ -322,6 +337,7 @@ class ServerEndpointTests(unittest.TestCase):
                 patch.object(GeminiClient, "init", fake_init),
                 patch.object(GeminiClient, "close", fake_close),
                 patch.object(GeminiClient, "generate_content", fake_generate_content),
+                patch("gemini_webapi.server.app.AsyncSession", FakeAsyncMediaSession),
                 TestClient(app) as client,
             ):
                 app.state.store.upsert_account(
@@ -621,7 +637,7 @@ class ServerEndpointTests(unittest.TestCase):
                             text="ok",
                             generated_images=[
                                 GeneratedImage(
-                                    url="https://example.invalid/generated.png",
+                                    url="https://lh3.googleusercontent.com/generated.png",
                                     title="generated",
                                 )
                             ],
@@ -633,6 +649,7 @@ class ServerEndpointTests(unittest.TestCase):
                 patch.object(GeminiClient, "init", fake_init),
                 patch.object(GeminiClient, "close", fake_close),
                 patch.object(GeminiClient, "generate_content", fake_generate_content),
+                patch("gemini_webapi.server.app.AsyncSession", FakeAsyncMediaSession),
                 TestClient(app) as client,
             ):
                 app.state.store.upsert_account(
@@ -652,6 +669,13 @@ class ServerEndpointTests(unittest.TestCase):
                         "prompt": "make image",
                     },
                 )
+                media_url = response.json()["data"][0]["url"]
+                content = client.get(media_url)
+                media_list_without_key = client.get("/v1/gemini/media")
+                media_list_with_key = client.get(
+                    "/v1/gemini/media",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
                 unsupported = client.post(
                     "/v1/images/generations",
                     headers={"Authorization": "Bearer sk-external"},
@@ -668,6 +692,10 @@ class ServerEndpointTests(unittest.TestCase):
             data = response.json()
             self.assertTrue(data["data"][0]["url"].startswith("/v1/gemini/media/"))
             self.assertEqual(data["data"][0]["revised_prompt"], "make image")
+            self.assertEqual(content.status_code, 200)
+            self.assertEqual(content.content, b"image-bytes")
+            self.assertEqual(media_list_without_key.status_code, 401)
+            self.assertEqual(media_list_with_key.status_code, 200)
             self.assertEqual(calls[0][1]["model"], "gemini-3.5-flash")
             self.assertEqual(calls[0][1]["generation_mode"], "image")
             self.assertEqual(unsupported.status_code, 400)

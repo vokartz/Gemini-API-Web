@@ -10,6 +10,7 @@ from gemini_webapi.server.app import (
     _openai_image_generation_output,
     _openai_model_object,
     _openai_model_ids,
+    _public_media_content_path,
     _resolve_model_arg,
 )
 from gemini_webapi.constants import Model
@@ -84,6 +85,12 @@ class ServerModelTests(unittest.TestCase):
 
         self.assertEqual(data["data"][0]["url"], "/v1/gemini/media/tok-1/content")
         self.assertEqual(data["data"][0]["revised_prompt"], "make image")
+
+    def test_only_media_content_path_is_public(self):
+        self.assertTrue(_public_media_content_path("/v1/gemini/media/token-1/content"))
+        self.assertFalse(_public_media_content_path("/v1/gemini/media"))
+        self.assertFalse(_public_media_content_path("/v1/gemini/media/token-1"))
+        self.assertFalse(_public_media_content_path("/v1/gemini/media/token-1/content/extra"))
 
     def test_static_model_enum_keeps_only_current_real_models(self):
         self.assertEqual(
