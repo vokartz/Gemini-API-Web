@@ -235,6 +235,19 @@ curl http://localhost:7860/v1/responses \
 
 `/v1/responses` 支持 `input` 字符串或 Responses 风格消息数组，并返回 `output_text`；当前暂不支持 `stream=true`，流式调用请继续使用 `/v1/chat/completions`。
 
+OpenAI 兼容图片生成：
+
+```sh
+curl http://localhost:7860/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "prompt": "生成一张赛博朋克风格的猫"
+  }'
+```
+
+`/v1/images/generations` 会调用 Gemini 图片生成模式，并返回本服务的媒体代理链接；当前仅支持 URL 返回，不支持 `response_format=b64_json`。
+
 常用模型：
 
 - `gemini`：默认映射到 Gemini 3.1 Pro。

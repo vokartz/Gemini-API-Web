@@ -7,6 +7,7 @@ from gemini_webapi.server.app import (
     _generation_mode_arg,
     _media_host_allowed,
     _media_record_dict,
+    _openai_image_generation_output,
     _openai_model_object,
     _openai_model_ids,
     _resolve_model_arg,
@@ -68,6 +69,21 @@ class ServerModelTests(unittest.TestCase):
                 "owned_by": "google",
             },
         )
+
+    def test_openai_image_generation_output_uses_content_url(self):
+        class MediaRecord:
+            token = "tok-1"
+            url = "https://lh3.googleusercontent.com/image.png"
+            kind = "image"
+            request_id = "img-1"
+
+        data = _openai_image_generation_output(
+            [MediaRecord()],
+            revised_prompt="make image",
+        )
+
+        self.assertEqual(data["data"][0]["url"], "/v1/gemini/media/tok-1/content")
+        self.assertEqual(data["data"][0]["revised_prompt"], "make image")
 
     def test_static_model_enum_keeps_only_current_real_models(self):
         self.assertEqual(

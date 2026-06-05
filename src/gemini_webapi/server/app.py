@@ -221,6 +221,16 @@ class ResponsesRequest(BaseModel):
     top_p: float | None = None
 
 
+class ImageGenerationRequest(BaseModel):
+    prompt: str
+    model: str | None = None
+    n: int | None = None
+    size: str | None = None
+    quality: str | None = None
+    response_format: str | None = None
+    store_media: bool = False
+
+
 MODEL_ALIASES = {
     "gemini": "gemini-3.1-pro",
 }
@@ -360,6 +370,24 @@ def _responses_output(
             "total_tokens": 0,
         },
     }
+
+
+def _openai_image_generation_output(
+    media_items: list[Any],
+    *,
+    revised_prompt: str | None = None,
+) -> dict[str, Any]:
+    data: list[dict[str, Any]] = []
+    for item in media_items:
+        media = _media_record_dict(item)
+        url = media.get("content_url") or media.get("url")
+        if not url:
+            continue
+        row: dict[str, Any] = {"url": url}
+        if revised_prompt:
+            row["revised_prompt"] = revised_prompt
+        data.append(row)
+    return {"created": int(time.time()), "data": data}
 
 
 def _tools_enabled(request: ChatCompletionRequest) -> bool:
@@ -1054,6 +1082,7 @@ def create_app(config: ServerConfig | None = None):
                 "/v1/models",
                 "/v1/chat/completions",
                 "/v1/responses",
+                "/v1/images/generations",
                 "/v1/generate",
                 "/v1/gemini/generate",
                 "/v1/gemini/stream",
@@ -2240,6 +2269,57 @@ def create_app(config: ServerConfig | None = None):
             model=model,
             text=output.text,
         )
+
+    @app.post("/v1/images/generations")
+    async def image_generations(request: ImageGenerationRequest) -> dict[str, Any]:
+        if request.response_format and request.response_format != "url":
+            raise HTTPException(
+                status_code=400,
+                detail="Only response_format=url is supported for /v1/images/generations.",
+            )
+        if request.n is not None and request.n < 1:
+            raise HTTPException(status_code=400, detail="n must be at least 1.")
+        request_id = f"img-{uuid.uuid4().hex}"
+        generation_mode = "image"
+        try:
+            resolved_model = _resolve_model_arg(request.model)
+
+            async def operation(client):
+                kwargs: dict[str, Any] = {"generation_mode": generation_mode}
+                if resolved_model:
+                    kwargs["model"] = resolved_model
+                output = await client.generate_content(request.prompt, **kwargs)
+                _ensure_media_generation_result(output, generation_mode)
+                return output
+
+            output = await rotator.run(
+                operation,
+                endpoint="/v1/images/generations",
+                model=request.model or "gemini",
+                output_type="gemini_image",
+                job_id=request_id,
+                media_generation_mode=generation_mode,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
+
+        account_id = rotator.status()["current_account_id"]
+        media_count = await _save_media_index(
+            request_id=request_id,
+            account_id=account_id,
+            output=output,
+            store_media=request.store_media,
+        )
+        if media_count:
+            store.update_request_log_media_count(request_id, media_count)
+        media_items = [
+            item
+            for item in store.list_media_outputs(limit=max(media_count, 1), kind="image")
+            if item.request_id == request_id
+        ]
+        if not media_items:
+            raise HTTPException(status_code=502, detail="Image generation did not return a usable image URL.")
+        return _openai_image_generation_output(media_items, revised_prompt=request.prompt)
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: ChatCompletionRequest):
