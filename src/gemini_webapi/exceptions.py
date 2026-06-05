@@ -38,6 +38,14 @@ class ImageGenerationError(APIError):
     pass
 
 
+class MediaGenerationEmptyResult(APIError):
+    """
+    媒体生成请求上游已返回，但响应中没有对应的图片、视频或音频结果。
+    """
+
+    pass
+
+
 class GeminiError(Exception):
     """
     Exception for errors returned from Gemini server which are not handled by the package.

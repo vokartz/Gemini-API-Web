@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from gemini_webapi.server.database import AccountStore
@@ -64,12 +65,18 @@ class TestAccountStore(unittest.TestCase):
                     model="gemini",
                     ok=True,
                     output_type="gemini_native",
+                    job_id="req-1",
                     media_count=2,
                 )
                 logs = store.list_request_logs()
                 self.assertEqual(len(logs), 1)
                 self.assertEqual(logs[0].endpoint, "/v1/gemini/generate")
                 self.assertEqual(logs[0].media_count, 2)
+
+                updated = store.update_request_log_media_count("req-1", 3)
+                self.assertEqual(updated, 1)
+                logs = store.list_request_logs()
+                self.assertEqual(logs[0].media_count, 3)
 
                 store.add_media_output(
                     request_id="req-1",
@@ -96,7 +103,9 @@ class TestAccountStore(unittest.TestCase):
                 store.set_media_cooldown(
                     account_id=1,
                     kind="image",
-                    blocked_until="2026-01-02T00:00:00Z",
+                    blocked_until=(
+                        datetime.now(timezone.utc) + timedelta(hours=1)
+                    ).isoformat().replace("+00:00", "Z"),
                     reason="usage limit",
                 )
                 cooldown = store.get_media_cooldown(1, "image")
@@ -108,6 +117,34 @@ class TestAccountStore(unittest.TestCase):
                 )
                 self.assertTrue(store.clear_media_cooldown(1, "image"))
                 self.assertIsNone(store.get_media_cooldown(1, "image"))
+
+                store.set_media_cooldown(
+                    account_id=1,
+                    kind="video",
+                    blocked_until=(
+                        datetime.now(timezone.utc) - timedelta(minutes=1)
+                    ).isoformat().replace("+00:00", "Z"),
+                    reason="expired",
+                )
+                self.assertIsNone(store.get_media_cooldown(1, "video"))
+                self.assertEqual(store.list_media_cooldowns(), [])
+
+                for kind in ("image", "video", "audio"):
+                    store.set_media_cooldown(
+                        account_id=1,
+                        kind=kind,
+                        blocked_until=(
+                            datetime.now(timezone.utc) + timedelta(hours=1)
+                        ).isoformat().replace("+00:00", "Z"),
+                        reason="limit",
+                    )
+                self.assertEqual(store.clear_media_cooldowns("video"), 1)
+                self.assertEqual(
+                    [item.kind for item in store.list_media_cooldowns()],
+                    ["audio", "image"],
+                )
+                self.assertEqual(store.clear_media_cooldowns(), 2)
+                self.assertEqual(store.list_media_cooldowns(), [])
 
                 log_id = store.add_request_log(
                     time="2026-01-01T00:00:01Z",
@@ -208,6 +245,78 @@ class TestAccountStore(unittest.TestCase):
                     store.get_media_output_by_token(media[0].token).request_id,
                     "req-old",
                 )
+            finally:
+                store.close()
+
+    def test_backfills_legacy_request_log_media_counts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "legacy_logs.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE request_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        time TEXT NOT NULL,
+                        duration_ms INTEGER NOT NULL,
+                        account_id INTEGER,
+                        account_name TEXT,
+                        endpoint TEXT NOT NULL,
+                        model TEXT,
+                        stream INTEGER NOT NULL DEFAULT 0,
+                        ok INTEGER NOT NULL,
+                        output_type TEXT,
+                        job_id TEXT,
+                        media_count INTEGER NOT NULL DEFAULT 0,
+                        deep_research_state TEXT,
+                        error TEXT
+                    );
+                    CREATE TABLE media_outputs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        request_id TEXT,
+                        account_id INTEGER,
+                        kind TEXT NOT NULL,
+                        title TEXT,
+                        url TEXT NOT NULL,
+                        thumbnail TEXT,
+                        metadata_json TEXT NOT NULL DEFAULT '{}',
+                        created_at TEXT NOT NULL
+                    );
+                    INSERT INTO request_logs (
+                        time, duration_ms, account_id, account_name, endpoint, model,
+                        stream, ok, output_type, job_id, media_count
+                    ) VALUES
+                    (
+                        '2026-01-01T00:00:00Z', 10, 1, 'one',
+                        '/v1/gemini/generate', 'gemini', 0, 1,
+                        'gemini_image', 'req-legacy', 0
+                    ),
+                    (
+                        '2026-01-01T00:00:01Z', 10, 1, 'one',
+                        '/v1/gemini/generate', 'gemini', 0, 1,
+                        'gemini_native', NULL, 0
+                    );
+                    INSERT INTO media_outputs (
+                        request_id, account_id, kind, title, url, thumbnail, metadata_json, created_at
+                    ) VALUES
+                    (
+                        'req-legacy', 1, 'image', 'One', 'https://example.com/one.png', NULL, '{}', '2026-01-01T00:00:00Z'
+                    ),
+                    (
+                        'req-legacy', 1, 'video', 'Two', 'https://example.com/two.mp4', NULL, '{}', '2026-01-01T00:00:01Z'
+                    );
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            store = AccountStore(db_path)
+            try:
+                logs = store.list_request_logs(limit=10)
+                by_job_id = {log.job_id: log for log in logs}
+                self.assertEqual(by_job_id["req-legacy"].media_count, 2)
+                self.assertEqual(by_job_id[None].media_count, 0)
             finally:
                 store.close()
 

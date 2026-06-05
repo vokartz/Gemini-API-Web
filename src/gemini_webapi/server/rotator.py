@@ -11,6 +11,7 @@ from ..client import GeminiClient
 from ..constants import AccountStatus
 from ..exceptions import (
     AuthError,
+    MediaGenerationEmptyResult,
     MediaGenerationTemporarilyUnavailable,
     TemporarilyBlocked,
     UsageLimitExceeded,
@@ -20,8 +21,10 @@ from ..exceptions import (
 from .database import Account, AccountStore
 
 T = TypeVar("T")
-MEDIA_GENERATION_MODES = {"image", "video"}
-MEDIA_LIMIT_COOLDOWN_SECONDS = 24 * 60 * 60
+MEDIA_GENERATION_MODES = {"audio", "image", "video"}
+# Gemini Web 端媒体额度现在更偏向短窗口恢复。自用场景只做冷却保护，
+# 避免某个账号额度不足时持续重试，不引入支付或硬额度系统。
+MEDIA_LIMIT_COOLDOWN_SECONDS = 5 * 60 * 60
 MEDIA_LIMIT_ERROR_MARKERS = (
     "limit",
     "quota",
@@ -607,6 +610,15 @@ class AccountRotator:
             return False
         return value > datetime.now(timezone.utc)
 
+    @staticmethod
+    def _cooldown_remaining_seconds(blocked_until: str) -> int:
+        try:
+            value = datetime.fromisoformat(blocked_until.replace("Z", "+00:00"))
+        except ValueError:
+            return 0
+        remaining = int((value - datetime.now(timezone.utc)).total_seconds())
+        return max(0, remaining)
+
     def _set_media_cooldown(self, account_id: int, kind: str, reason: str) -> None:
         blocked_until = (
             datetime.now(timezone.utc) + timedelta(seconds=MEDIA_LIMIT_COOLDOWN_SECONDS)
@@ -621,6 +633,8 @@ class AccountRotator:
     @staticmethod
     def _is_media_limit_error(exc: Exception) -> bool:
         if isinstance(exc, UsageLimitExceeded):
+            return True
+        if isinstance(exc, MediaGenerationEmptyResult):
             return True
         if isinstance(exc, VideoGenerationNotSubmitted):
             return False
@@ -682,6 +696,9 @@ class AccountRotator:
                 continue
             cooldowns[kind] = {
                 "blocked_until": cooldown.blocked_until,
+                "remaining_seconds": self._cooldown_remaining_seconds(
+                    cooldown.blocked_until
+                ),
                 "reason": cooldown.reason or "",
             }
         return cooldowns

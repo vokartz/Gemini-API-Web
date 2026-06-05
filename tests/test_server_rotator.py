@@ -4,13 +4,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from gemini_webapi.exceptions import (
+    MediaGenerationEmptyResult,
     MediaGenerationTemporarilyUnavailable,
     UsageLimitExceeded,
     VideoGenerationFailed,
     VideoGenerationNotSubmitted,
 )
 from gemini_webapi.server.database import AccountStore
-from gemini_webapi.server.rotator import AccountRotator, ClientSlot
+from gemini_webapi.server.rotator import (
+    AccountRotator,
+    ClientSlot,
+    MEDIA_LIMIT_COOLDOWN_SECONDS,
+)
 
 
 class FakeClient:
@@ -131,6 +136,17 @@ class AccountRotatorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(
                     any(log.output_type == "image_generation_attempt" for log in logs)
                 )
+
+                await rotator.run(
+                    operation,
+                    endpoint="/v1/gemini/generate",
+                    output_type="gemini_audio",
+                    media_generation_mode="audio",
+                )
+                logs = store.list_request_logs(limit=10)
+                self.assertTrue(
+                    any(log.output_type == "audio_generation_attempt" for log in logs)
+                )
             finally:
                 store.close()
 
@@ -236,9 +252,64 @@ class AccountRotatorTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(result, "ok")
                 self.assertEqual(calls, [first.id, second.id])
-                self.assertIsNotNone(store.get_media_cooldown(first.id, "image"))
+                cooldown = store.get_media_cooldown(first.id, "image")
+                self.assertIsNotNone(cooldown)
+                # 媒体额度错误只冷却 5 小时，避免自用服务在额度恢复后仍被锁一天。
+                blocked_until = datetime.fromisoformat(
+                    cooldown.blocked_until.replace("Z", "+00:00")
+                )
+                remaining = blocked_until - datetime.now(timezone.utc)
+                self.assertGreater(remaining, timedelta(hours=4, minutes=50))
+                self.assertLessEqual(
+                    remaining,
+                    timedelta(seconds=MEDIA_LIMIT_COOLDOWN_SECONDS),
+                )
                 logs = store.list_request_logs(limit=20)
                 self.assertTrue(any(log.output_type == "image_generation_attempt" for log in logs))
+            finally:
+                store.close()
+
+    async def test_audio_media_limit_uses_cooldown_and_next_account(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = AccountStore(Path(tmp) / "app.db")
+            try:
+                first = store.upsert_account(
+                    name="one",
+                    secure_1psid="psid-one",
+                    secure_1psidts="ts-one",
+                    cookies={"__Secure-1PSID": "psid-one"},
+                )
+                second = store.upsert_account(
+                    name="two",
+                    secure_1psid="psid-two",
+                    secure_1psidts="ts-two",
+                    cookies={"__Secure-1PSID": "psid-two"},
+                )
+                store.set_state("current_account_id", str(first.id))
+                rotator = MultiAccountRotator(store)
+                calls = []
+
+                async def operation(client):
+                    account_id = next(
+                        slot.account.id
+                        for slot in rotator.slots.values()
+                        if slot.client is client
+                    )
+                    calls.append(account_id)
+                    if account_id == first.id:
+                        raise UsageLimitExceeded("audio usage limit reached")
+                    return "ok"
+
+                result = await rotator.run(
+                    operation,
+                    endpoint="/v1/gemini/generate",
+                    output_type="gemini_audio",
+                    media_generation_mode="audio",
+                )
+
+                self.assertEqual(result, "ok")
+                self.assertEqual(calls, [first.id, second.id])
+                self.assertIsNotNone(store.get_media_cooldown(first.id, "audio"))
             finally:
                 store.close()
 
@@ -357,6 +428,47 @@ class AccountRotatorTests(unittest.IsolatedAsyncioTestCase):
                     )
 
                 self.assertIsNone(store.get_media_cooldown(account.id, "video"))
+            finally:
+                store.close()
+
+    async def test_empty_media_result_sets_media_cooldown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = AccountStore(Path(tmp) / "app.db")
+            try:
+                account = store.upsert_account(
+                    name="one",
+                    secure_1psid="psid-one",
+                    secure_1psidts="ts-one",
+                    cookies={"__Secure-1PSID": "psid-one"},
+                )
+                rotator = TestRotator(store)
+
+                async def operation(client):
+                    raise MediaGenerationEmptyResult(
+                        "image monitor: upstream returned 2xx without image result"
+                    )
+
+                with self.assertRaises(MediaGenerationEmptyResult):
+                    await rotator.run(
+                        operation,
+                        endpoint="/v1/gemini/generate",
+                        output_type="gemini_image",
+                        media_generation_mode="image",
+                    )
+
+                cooldown = store.get_media_cooldown(account.id, "image")
+                self.assertIsNotNone(cooldown)
+                self.assertIn("without image result", cooldown.reason)
+                remaining_seconds = (
+                    datetime.fromisoformat(
+                        cooldown.blocked_until.replace("Z", "+00:00")
+                    )
+                    - datetime.now(timezone.utc)
+                ).total_seconds()
+                self.assertGreaterEqual(
+                    remaining_seconds,
+                    MEDIA_LIMIT_COOLDOWN_SECONDS - 5,
+                )
             finally:
                 store.close()
 

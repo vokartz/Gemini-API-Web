@@ -8,56 +8,75 @@
   <style>
     :root {
       color-scheme: light;
-      --bg: #f4f6f9;
+      --bg: #fdf9f2;
       --panel: #fff;
-      --soft: #f9fbfd;
-      --line: #d8e0ea;
-      --text: #172033;
-      --muted: #667085;
-      --accent: #1769d8;
-      --accent-soft: #eaf2ff;
-      --danger: #c83e3e;
-      --ok: #16845b;
-      --warn: #a05a00;
+      --soft: #f7f3ec;
+      --soft-strong: #f1ede6;
+      --line: #e8ded2;
+      --line-strong: #d9c2b6;
+      --text: #1c1c18;
+      --muted: #54433a;
+      --accent: #8d4a17;
+      --accent-hover: #b66a35;
+      --accent-soft: #f2e0cc;
+      --danger: #ba1a1a;
+      --ok: #6d855f;
+      --warn: #a06119;
+      --code-bg: #31302c;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: var(--bg);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,0) 260px),
+        var(--bg);
       color: var(--text);
-      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 14px/1.55 "Plus Jakarta Sans", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 16px;
-      padding: 14px 20px;
+      padding: 16px 24px;
       border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      background: rgba(253, 249, 242, .94);
+      backdrop-filter: blur(10px);
       position: sticky;
       top: 0;
       z-index: 5;
     }
-    h1 { margin: 0; font-size: 18px; font-weight: 750; }
-    h2 { margin: 0; font-size: 15px; }
+    h1 {
+      margin: 0;
+      font-family: "Noto Serif SC", "Noto Serif", serif;
+      font-size: 21px;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 0;
+      font-family: "Noto Serif SC", "Noto Serif", serif;
+      font-size: 17px;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
     h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
-    main { padding: 14px 16px; display: grid; gap: 14px; }
+    main { width: min(1240px, calc(100vw - 32px)); margin: 0 auto; padding: 16px 0 24px; display: grid; gap: 14px; }
     nav {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
       padding: 6px;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
+      border-radius: 4px;
+      background: var(--soft);
     }
     nav button { flex: 0 0 auto; }
     nav button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     section {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 4px;
       overflow: hidden;
     }
     .section-head {
@@ -81,7 +100,7 @@
     .cards { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 8px; }
     .card {
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 4px;
       background: var(--soft);
       padding: 10px 12px;
       display: grid;
@@ -98,8 +117,8 @@
       gap: 6px;
       padding: 4px;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
+      border-radius: 4px;
+      background: var(--panel);
     }
     .segmented button {
       min-height: 30px;
@@ -107,13 +126,13 @@
       background: transparent;
       padding: 5px 9px;
     }
-    .segmented button.active-filter { background: var(--accent-soft); color: var(--accent); border-color: #cfe0fb; }
+    .segmented button.active-filter { background: var(--accent-soft); color: var(--accent); border-color: var(--line-strong); }
     .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; min-width: 0; }
     .three { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
     .charts { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 12px; align-items: stretch; }
     .chart-box {
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 4px;
       background: var(--soft);
       padding: 12px;
       display: grid;
@@ -121,44 +140,55 @@
       min-height: 150px;
       min-width: 0;
     }
-    .gauge { height: 10px; border-radius: 999px; background: #e8edf4; overflow: hidden; }
+    .gauge { height: 10px; border-radius: 4px; background: var(--soft-strong); overflow: hidden; }
     .gauge-fill { width: 0%; height: 100%; background: var(--ok); transition: width .2s ease; }
     .gauge-fill.warn { background: var(--warn); }
     .gauge-fill.bad { background: var(--danger); }
     .bars { display: grid; gap: 8px; }
     .bar-row { display: grid; grid-template-columns: minmax(120px, 190px) 1fr auto; gap: 8px; align-items: center; }
     .bar-label, .bar-value { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .bar-track { height: 9px; border-radius: 999px; background: #e8edf4; overflow: hidden; }
+    .bar-track { height: 9px; border-radius: 4px; background: var(--soft-strong); overflow: hidden; }
     .bar-fill { width: 0%; height: 100%; background: var(--accent); }
     .trend { display: grid; grid-template-columns: repeat(20, 1fr); gap: 3px; align-items: end; height: 48px; }
-    .trend span { display: block; min-height: 4px; border-radius: 3px 3px 0 0; background: #cfe0fb; }
+    .trend span { display: block; min-height: 4px; border-radius: 3px 3px 0 0; background: #d7c3b0; }
     .trend span.warn { background: var(--warn); }
     .trend span.bad { background: var(--danger); }
     button {
       min-height: 36px;
       border: 1px solid var(--line);
-      background: #fff;
+      background: var(--panel);
       color: var(--text);
-      border-radius: 6px;
+      border-radius: 4px;
       padding: 7px 10px;
       font: inherit;
       cursor: pointer;
       white-space: nowrap;
     }
     button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-    button.soft { background: var(--accent-soft); color: var(--accent); border-color: #cfe0fb; }
-    button.danger { color: var(--danger); border-color: #efc7c7; }
+    button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    button.soft { background: var(--accent-soft); color: var(--accent); border-color: var(--line-strong); }
+    button.danger { color: var(--danger); border-color: #e9b8b1; background: #fffafa; }
+    button:hover {
+      border-color: var(--line-strong);
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(49, 48, 44, .04);
+    }
     input, textarea, select {
       width: 100%;
       min-width: 0;
       border: 1px solid var(--line);
-      border-radius: 6px;
+      border-radius: 4px;
       padding: 8px 10px;
-      background: #fff;
+      background: #fffdf9;
       color: var(--text);
       font: inherit;
     }
-    textarea { min-height: 106px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--accent-hover);
+      box-shadow: 0 0 0 3px rgba(182, 106, 53, .12);
+    }
+    textarea { min-height: 106px; resize: vertical; font-family: "JetBrains Mono", Consolas, ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
     label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; min-width: 0; }
     .hint { color: var(--muted); font-size: 12px; }
     .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
@@ -167,17 +197,17 @@
     .pill {
       display: inline-flex;
       border: 1px solid var(--line);
-      border-radius: 999px;
+      border-radius: 4px;
       padding: 2px 8px;
       font-size: 12px;
       color: var(--muted);
-      background: #fff;
+      background: #fffdf9;
     }
-    .pill.current { color: var(--ok); border-color: #b7e1ce; background: #effaf5; }
-    .pill.off { color: var(--warn); border-color: #f2d4a4; background: #fff8e8; }
+    .pill.current { color: var(--ok); border-color: #c8d7bd; background: #eef3e8; }
+    .pill.off { color: var(--warn); border-color: #e8cda8; background: #f8ead8; }
     .account, .item {
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 4px;
       background: var(--soft);
       padding: 10px;
       display: grid;
@@ -190,7 +220,7 @@
     .media-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
     .media-card {
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 4px;
       background: var(--soft);
       padding: 10px;
       display: grid;
@@ -203,8 +233,8 @@
       max-height: 320px;
       object-fit: contain;
       border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
+      border-radius: 4px;
+      background: #fffdf9;
     }
     .media-card audio { width: 100%; }
     .media-preview-empty { min-width: 0; overflow-wrap: anywhere; }
@@ -212,8 +242,9 @@
     .media-url {
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
       max-width: 100%;
+      overflow-wrap: anywhere;
     }
     .line-clamp {
       overflow: hidden;
@@ -225,7 +256,7 @@
     .media-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .media-preview-empty {
       border: 1px dashed var(--line);
-      border-radius: 8px;
+      border-radius: 4px;
       padding: 12px;
       color: var(--muted);
       background: var(--soft);
@@ -235,15 +266,32 @@
       align-content: center;
     }
     .accounts-layout { display: grid; gap: 14px; min-width: 0; }
-    .account-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+    .account-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+    .account-tools > section { height: 100%; }
     .account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }
-    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; max-width: 100%; min-width: 0; max-height: 620px; }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 4px; max-width: 100%; min-width: 0; max-height: 620px; background: var(--panel); }
     table { width: 100%; border-collapse: collapse; min-width: 1040px; }
     th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
-    th { background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 650; position: sticky; top: 0; z-index: 1; }
+    th { background: var(--soft-strong); color: var(--muted); font-size: 12px; font-weight: 650; position: sticky; top: 0; z-index: 1; }
     tr:last-child td { border-bottom: 0; }
     .error-cell { white-space: normal; overflow-wrap: anywhere; min-width: 220px; max-width: 420px; }
     .clip-cell { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .log-cards { display: none; gap: 10px; }
+    .log-card {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--soft);
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+    .log-card-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; min-width: 0; }
+    .log-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .log-meta { border: 1px solid var(--line); border-radius: 4px; background: #fffdf9; padding: 7px; min-width: 0; }
+    .log-meta span { display: block; color: var(--muted); font-size: 11px; }
+    .log-meta strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .log-error { white-space: normal; overflow-wrap: anywhere; }
     .nowrap { white-space: nowrap; }
     .ok-text { color: var(--ok); font-weight: 650; }
     .bad-text { color: var(--danger); font-weight: 650; }
@@ -253,23 +301,24 @@
       max-width: 100%;
       overflow: auto;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #101828;
-      color: #d6e4ff;
+      border-radius: 4px;
+      background: var(--code-bg);
+      color: #f4f0e9;
       padding: 12px;
+      font-family: "JetBrains Mono", Consolas, ui-monospace, SFMono-Regular, monospace;
       font-size: 12px;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
     details.raw-json {
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 4px;
       overflow: hidden;
       background: var(--soft);
       min-width: 0;
       max-width: 100%;
     }
-    details.raw-json:not([open]) { background: #fff; }
+    details.raw-json:not([open]) { background: #fffdf9; }
     details.raw-json > summary {
       cursor: pointer;
       padding: 10px 12px;
@@ -292,7 +341,7 @@
       align-items: center;
       justify-content: center;
       padding: 18px;
-      background: rgba(15, 23, 42, .42);
+      background: rgba(49, 48, 44, .38);
       z-index: 20;
     }
     .modal-backdrop.open { display: flex; }
@@ -301,16 +350,45 @@
       max-height: calc(100vh - 36px);
       overflow: auto;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 4px;
       background: var(--panel);
-      box-shadow: 0 24px 80px rgba(15, 23, 42, .25);
+      box-shadow: 0 18px 48px rgba(49, 48, 44, .16);
     }
     .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 14px; border-bottom: 1px solid var(--line); }
     .modal-body { padding: 14px; display: grid; gap: 12px; }
-    .notice { border: 1px solid #cfe0fb; background: var(--accent-soft); color: #24486f; border-radius: 8px; padding: 10px; font-size: 12px; }
+    .notice { border: 1px solid var(--line-strong); background: var(--accent-soft); color: #6f3b12; border-radius: 4px; padding: 10px; font-size: 12px; }
+    .notice.warning { border-color: #e8cda8; background: #f8ead8; color: #6e3f0f; }
+    .notice.danger { border-color: #e9b8b1; background: #fff1ef; color: #93000a; }
+    .diagnostic {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+    }
+    .diagnostic-title { font-weight: 700; color: var(--text); }
+    .diagnostic-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    .status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .status-cell { border: 1px solid var(--line); background: #fffdf9; border-radius: 4px; padding: 8px; min-width: 0; }
+    .status-cell strong { display: block; font-size: 16px; }
+    .cooldown-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .cooldown-card {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #fffdf9;
+      padding: 10px;
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .cooldown-card.warning { border-color: #e8cda8; background: #f8ead8; }
+    .cooldown-card.danger { border-color: #e9b8b1; background: #fff1ef; }
+    .cooldown-card strong { font-size: 18px; }
     @media (max-width: 980px) {
       .grid, .split, .three, .charts, .media-grid, .account-tools { grid-template-columns: 1fr; }
       .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .diagnostic { grid-template-columns: 1fr; }
+      .diagnostic-actions { justify-content: flex-start; }
+      .cooldown-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 560px) {
       header { flex-direction: column; align-items: flex-start; }
@@ -326,7 +404,9 @@
       .cards { grid-template-columns: 1fr; }
       .row button:not(nav button) { flex: 1 1 120px; }
       .button-row button { flex: 1 1 120px; }
-      .table-wrap { max-width: calc(100vw - 48px); max-height: 520px; }
+      .request-log-table { display: none; }
+      .log-cards { display: grid; }
+      .log-meta-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -373,6 +453,10 @@
               <div id="modelChart" class="bars"></div>
             </div>
           </div>
+          <div class="chart-box">
+            <div class="row"><b>媒体冷却概览</b><span class="hint">按账号池统计图片 / 视频 / 音频</span></div>
+            <div id="mediaCooldownOverview" class="cooldown-grid"></div>
+          </div>
           <div class="three">
             <div class="item"><b>Gemini 3.1 Pro</b><span class="hint">model: gemini 或 gemini-3.1-pro</span></div>
             <div class="item"><b>Gemini 3.5 Flash</b><span class="hint">model: gemini-3.5-flash</span></div>
@@ -387,10 +471,11 @@
         </div>
         <div class="content">
           <div class="table-wrap">
-            <table>
+            <table class="request-log-table">
               <thead><tr><th>时间</th><th>状态</th><th>账户</th><th>模型</th><th>接口</th><th>类型</th><th>媒体</th><th>耗时</th><th>错误</th></tr></thead>
               <tbody id="requestLogRows"></tbody>
             </table>
+            <div id="requestLogCards" class="log-cards"></div>
           </div>
         </div>
       </section>
@@ -615,7 +700,7 @@
   </div>
 
   <script>
-    const state = { status: null, logs: [], media: [], gems: [], jobs: [], files: [], authWindow: null };
+    const state = { status: null, logs: [], media: [], mediaCooldowns: null, gems: [], jobs: [], files: [], authWindow: null };
     const $ = id => document.getElementById(id);
 
     async function api(path, options = {}) {
@@ -631,12 +716,68 @@
     function showJson(id, data) { $(id).textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2); }
     function esc(value) { return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
     function fmt(value) { const d = new Date(value); return Number.isNaN(d.getTime()) ? (value || "-") : d.toLocaleString(); }
+    function fmtDuration(seconds) {
+      const value = Math.max(0, Number(seconds || 0));
+      if (!value) return "即将恢复";
+      const hours = Math.floor(value / 3600);
+      const minutes = Math.ceil((value % 3600) / 60);
+      if (hours > 0) return `${hours}小时${minutes ? `${minutes}分钟` : ""}`;
+      return `${minutes}分钟`;
+    }
+    function mediaCooldownEntries(account) {
+      const labels = { image: "图片", video: "视频", audio: "音频" };
+      return Object.entries(account.media_cooldowns || {}).map(([kind, cooldown]) => ({
+        kind,
+        label: labels[kind] || kind,
+        blocked_until: cooldown.blocked_until,
+        remaining_seconds: cooldown.remaining_seconds,
+        reason: cooldown.reason || "",
+      }));
+    }
+    function mediaCooldownMarkup(account) {
+      const entries = mediaCooldownEntries(account);
+      if (!entries.length) return `<div class="hint">媒体生成：图片 / 视频 / 音频均可尝试。</div>`;
+      return `<div class="stack">${entries.map(item => `
+        <div class="notice">
+          ${esc(item.label)}冷却中，约 ${esc(fmtDuration(item.remaining_seconds))} 后恢复
+          <span class="hint">(${esc(fmt(item.blocked_until))})</span>
+          ${item.reason ? `<div class="hint line-clamp" title="${esc(item.reason)}">${esc(item.reason)}</div>` : ""}
+          <div class="row button-row">
+            <button data-action="clear-media-cooldown" data-id="${account.id}" data-kind="${esc(item.kind)}">解除${esc(item.label)}冷却</button>
+          </div>
+        </div>
+      `).join("")}</div>`;
+    }
+    function mediaCooldownSummary(accounts) {
+      const labels = { image: "图片", video: "视频", audio: "音频" };
+      const activeAccounts = accounts.filter(a => a.enabled && !a.expired);
+      return ["image", "video", "audio"].map(kind => {
+        const blocked = activeAccounts
+          .map(account => ({ account, cooldown: account.media_cooldowns?.[kind] }))
+          .filter(item => item.cooldown);
+        const next = blocked
+          .map(item => ({
+            account: item.account,
+            blocked_until: item.cooldown.blocked_until,
+            remaining_seconds: Number(item.cooldown.remaining_seconds || 0),
+          }))
+          .sort((a, b) => a.remaining_seconds - b.remaining_seconds)[0];
+        return {
+          kind,
+          label: labels[kind],
+          total: activeAccounts.length,
+          blocked: blocked.length,
+          available: Math.max(0, activeAccounts.length - blocked.length),
+          next,
+        };
+      });
+    }
     function openModal(id) { $(id).classList.add("open"); }
     function closeModal(id) { $(id).classList.remove("open"); }
-    function noVncUrl() { const p = window.location.protocol === "https:" ? "https:" : "http:"; return `${p}//${window.location.hostname}:6080/vnc.html?autoconnect=true&resize=scale&path=websockify`; }
+    function noVncUrl() { return `${window.location.origin}/novnc/vnc.html?autoconnect=true&resize=scale&path=websockify`; }
 
     async function refreshAll() {
-      await Promise.all([refreshStatus(), refreshLogs(), refreshMedia(), refreshJobs()]);
+      await Promise.all([refreshStatus(), refreshLogs(), refreshMedia(), refreshMediaCooldowns(), refreshJobs()]);
     }
     async function refreshStatus() {
       try {
@@ -658,6 +799,11 @@
       const data = await api("/v1/request-logs?limit=80");
       state.logs = data.logs || [];
       renderLogs();
+      renderMetrics();
+    }
+    async function refreshMediaCooldowns() {
+      const data = await api("/v1/media-cooldowns");
+      state.mediaCooldowns = data;
       renderMetrics();
     }
     async function refreshMedia(kind = "") {
@@ -689,6 +835,7 @@
       $("metricErrorRate").textContent = `${errorRate}%`;
       $("metricWarnings").textContent = warnings.length;
       renderDashboardCharts(errorRate, warnings);
+      renderMediaCooldownOverview(accounts);
     }
     function dashboardWarnings(accounts, errorRate) {
       const warnings = [];
@@ -699,7 +846,30 @@
       if (current && current.failure_count >= Math.max(1, Number(state.status?.failure_threshold || 0))) warnings.push("当前账户失败次数已达到切换阈值。");
       const disabled = accounts.filter(a => !a.enabled || a.expired).length;
       if (disabled) warnings.push(`${disabled} 个账户不可用或已停用。`);
+      mediaCooldownSummaryFromState(accounts)
+        .filter(item => item.total > 0 && item.blocked >= item.total)
+        .forEach(item => warnings.push(`全部可用账户的${item.label}生成都在冷却中。`));
       return warnings;
+    }
+    function mediaCooldownSummaryFromState(accounts) {
+      return state.mediaCooldowns?.summary || mediaCooldownSummary(accounts);
+    }
+    function renderMediaCooldownOverview(accounts) {
+      const summary = mediaCooldownSummaryFromState(accounts);
+      $("mediaCooldownOverview").innerHTML = summary.map(item => {
+        const tone = item.total > 0 && item.blocked >= item.total ? "danger" : item.blocked ? "warning" : "";
+        const nextText = item.next
+          ? `最近恢复：#${item.next.account_id ?? item.next.account?.id} ${esc(item.next.account_name || item.next.account?.name || "未命名")}，${esc(fmtDuration(item.next.remaining_seconds))}`
+          : "当前没有媒体冷却";
+        const availabilityText = item.total ? `${item.available}/${item.total} 可用` : "无可用账号";
+        return `<div class="cooldown-card ${tone}">
+          <div class="row"><b>${esc(item.label)}</b><span class="pill ${item.available ? "current" : "off"}">${availabilityText}</span></div>
+          <strong>${item.blocked}</strong>
+          <span class="hint">冷却中的可用账号</span>
+          <span class="hint line-clamp" title="${nextText}">${nextText}</span>
+          ${item.blocked ? `<button data-cooldown-action="clear-kind" data-kind="${esc(item.kind)}">清除${esc(item.label)}冷却</button>` : ""}
+        </div>`;
+      }).join("");
     }
     function renderDashboardCharts(errorRate, warnings) {
       const gauge = $("errorGaugeFill");
@@ -737,13 +907,53 @@
       const accounts = state.status?.accounts || [];
       const current = accounts.find(a => a.current);
       if (!current) {
-        $("currentAccountPanel").innerHTML = "当前没有可用账户，请添加或启用账户。";
+        $("currentAccountPanel").className = "notice danger";
+        $("currentAccountPanel").innerHTML = `
+          <div class="diagnostic">
+            <div>
+              <div class="diagnostic-title">当前没有可用账户</div>
+              <div class="hint">请添加 Cookie，或使用网页授权重新登录 Gemini。</div>
+            </div>
+            <div class="diagnostic-actions">
+              <button class="primary" data-panel-action="auth">网页授权</button>
+              <button data-panel-action="validate-all">验证全部账户</button>
+            </div>
+          </div>`;
         return;
       }
+      const usable = accounts.filter(a => a.enabled && !a.expired).length;
+      const expired = accounts.filter(a => a.expired).length;
+      const disabled = accounts.filter(a => !a.enabled).length;
       const expiredText = current.expired ? "已过期，需要重新认证" : "认证状态正常";
       const enabledText = current.enabled ? "启用" : "停用";
       const validation = current.validation_status ? `最近验证：${esc(current.validation_status)}${current.validated_at ? ` / ${esc(fmt(current.validated_at))}` : ""}` : "尚未验证";
-      $("currentAccountPanel").innerHTML = `<b>当前账户 #${current.id} ${esc(current.name || "未命名")}</b>，${enabledText}，${expiredText}。调用 ${current.usage_count} 次，失败 ${current.failure_count} 次${current.last_used_at ? `，最近 ${esc(fmt(current.last_used_at))}` : ""}。${validation}。`;
+      const cooldowns = mediaCooldownEntries(current);
+      const cooldownText = cooldowns.length
+        ? `媒体冷却：${cooldowns.map(item => `${item.label} ${fmtDuration(item.remaining_seconds)}`).join("，")}`
+        : "媒体生成未冷却";
+      const tone = current.expired || !current.enabled ? "danger" : cooldowns.length ? "warning" : "";
+      $("currentAccountPanel").className = `notice ${tone}`.trim();
+      $("currentAccountPanel").innerHTML = `
+        <div class="diagnostic">
+          <div class="stack">
+            <div>
+              <div class="diagnostic-title">当前账户 #${current.id} ${esc(current.name || "未命名")}</div>
+              <div class="hint">${enabledText}，${expiredText}。调用 ${current.usage_count} 次，失败 ${current.failure_count} 次${current.last_used_at ? `，最近 ${esc(fmt(current.last_used_at))}` : ""}。</div>
+              <div class="hint">${validation}${current.validation_message ? `：${esc(current.validation_message)}` : ""}</div>
+              <div class="hint">${esc(cooldownText)}。</div>
+            </div>
+            <div class="status-grid">
+              <div class="status-cell"><strong>${usable}</strong><span class="hint">可用账户</span></div>
+              <div class="status-cell"><strong>${expired}</strong><span class="hint">需认证</span></div>
+              <div class="status-cell"><strong>${disabled}</strong><span class="hint">已停用</span></div>
+            </div>
+          </div>
+          <div class="diagnostic-actions">
+            ${current.expired ? `<button class="primary" data-panel-action="auth">重新网页授权</button>` : ""}
+            <button data-panel-action="validate-current">验证当前</button>
+            <button data-panel-action="validate-all">验证全部</button>
+          </div>
+        </div>`;
     }
     function renderAccounts(accounts) {
       $("accountList").innerHTML = accounts.length ? accounts.map(a => `
@@ -756,13 +966,32 @@
             </div>
             <div class="row">${a.current ? `<span class="pill current">当前</span>` : ""}<span class="pill ${a.enabled ? "" : "off"}">${a.enabled ? "启用" : "停用"}</span><span class="pill ${a.expired ? "off" : "current"}">${a.expired ? "需认证" : "有效"}</span></div>
           </div>
-          <div class="row button-row"><button data-action="use" data-id="${a.id}">设为当前</button><button data-action="validate" data-id="${a.id}">验证</button><button data-action="toggle" data-id="${a.id}" data-enabled="${a.enabled}">${a.enabled ? "停用" : "启用"}</button><button class="danger" data-action="delete" data-id="${a.id}">删除</button></div>
+          ${mediaCooldownMarkup(a)}
+          <div class="row button-row"><button data-action="use" data-id="${a.id}">设为当前</button><button data-action="validate" data-id="${a.id}">验证</button><button data-action="clear-all-media-cooldowns" data-id="${a.id}">清除媒体冷却</button><button data-action="toggle" data-id="${a.id}" data-enabled="${a.enabled}">${a.enabled ? "停用" : "启用"}</button><button class="danger" data-action="delete" data-id="${a.id}">删除</button></div>
         </div>`).join("") : `<div class="hint">还没有账户。</div>`;
     }
     function renderLogs() {
       $("requestLogRows").innerHTML = state.logs.length ? state.logs.map(l => `
         <tr><td>${esc(fmt(l.time))}</td><td class="${l.ok ? "ok-text" : "bad-text"}">${l.ok ? "成功" : "失败"}</td><td class="clip-cell" title="#${l.account_id ?? "-"} ${esc(l.account_name || "")}">#${l.account_id ?? "-"} ${esc(l.account_name || "")}</td><td class="clip-cell" title="${esc(l.model || "-")}">${esc(l.model || "-")}${l.stream ? " / stream" : ""}</td><td class="clip-cell" title="${esc(l.endpoint)}">${esc(l.endpoint)}</td><td class="clip-cell" title="${esc(l.output_type || "-")}">${esc(l.output_type || "-")}</td><td>${l.media_count || 0}</td><td>${l.duration_ms} ms</td><td class="error-cell">${esc(l.error || "")}</td></tr>
       `).join("") : `<tr><td colspan="9" class="hint">还没有请求日志。</td></tr>`;
+      $("requestLogCards").innerHTML = state.logs.length ? state.logs.map(l => `
+        <div class="log-card">
+          <div class="log-card-top">
+            <div class="stack">
+              <strong>${esc(fmt(l.time))}</strong>
+              <span class="hint">#${l.account_id ?? "-"} ${esc(l.account_name || "")}</span>
+            </div>
+            <span class="${l.ok ? "ok-text" : "bad-text"}">${l.ok ? "成功" : "失败"}</span>
+          </div>
+          <div class="log-meta-grid">
+            <div class="log-meta"><span>模型</span><strong title="${esc(l.model || "-")}">${esc(l.model || "-")}${l.stream ? " / stream" : ""}</strong></div>
+            <div class="log-meta"><span>接口</span><strong title="${esc(l.endpoint)}">${esc(l.endpoint)}</strong></div>
+            <div class="log-meta"><span>类型</span><strong title="${esc(l.output_type || "-")}">${esc(l.output_type || "-")}</strong></div>
+            <div class="log-meta"><span>媒体 / 耗时</span><strong>${l.media_count || 0} / ${l.duration_ms} ms</strong></div>
+          </div>
+          ${l.error ? `<div class="notice danger log-error">${esc(l.error)}</div>` : ""}
+        </div>
+      `).join("") : `<div class="hint">还没有请求日志。</div>`;
     }
     function renderGems() {
       $("gemList").innerHTML = state.gems.length ? state.gems.map(g => `
@@ -894,6 +1123,17 @@
     };
     $("refreshAllBtn").onclick = refreshAll;
     $("refreshAccountsBtn").onclick = refreshAll;
+    $("mediaCooldownOverview").onclick = async event => {
+      const btn = event.target.closest("button[data-cooldown-action]");
+      if (!btn) return;
+      if (btn.dataset.cooldownAction === "clear-kind") {
+        const data = await api("/v1/media-cooldowns/clear", { method: "POST", body: JSON.stringify({ kind: btn.dataset.kind }) });
+        state.mediaCooldowns = data;
+        await refreshStatus();
+        renderMetrics();
+        setMsg(data.cleared ? `已清除 ${data.cleared} 条${btn.textContent.replace("清除", "")}` : "没有需要清除的媒体冷却");
+      }
+    };
     $("refreshMediaBtn").onclick = () => refreshMedia();
     $("refreshGemsBtn").onclick = refreshGems;
     $("refreshJobsBtn").onclick = refreshJobs;
@@ -1049,6 +1289,24 @@
         return;
       }
       if (btn.dataset.action === "toggle") await api(`/v1/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: btn.dataset.enabled !== "true" }) });
+      if (btn.dataset.action === "clear-media-cooldown") {
+        const data = await api(`/v1/accounts/${id}/media-cooldowns/clear`, { method: "POST", body: JSON.stringify({ kind: btn.dataset.kind }) });
+        state.status.accounts = data.accounts || state.status.accounts;
+        renderAccounts(state.status.accounts);
+        renderCurrentAccount();
+        renderMetrics();
+        setMsg(`已解除账户 #${id} 的${btn.textContent.replace("解除", "").replace("冷却", "")}冷却`);
+        return;
+      }
+      if (btn.dataset.action === "clear-all-media-cooldowns") {
+        const data = await api(`/v1/accounts/${id}/media-cooldowns/clear`, { method: "POST", body: "{}" });
+        state.status.accounts = data.accounts || state.status.accounts;
+        renderAccounts(state.status.accounts);
+        renderCurrentAccount();
+        renderMetrics();
+        setMsg(data.cleared?.length ? `已清除账户 #${id} 的媒体冷却` : `账户 #${id} 没有媒体冷却`);
+        return;
+      }
       if (btn.dataset.action === "delete" && confirm(`确认删除账户 #${id}？`)) await api(`/v1/accounts/${id}`, { method: "DELETE" });
       await refreshAll();
     };
@@ -1056,10 +1314,27 @@
       await api("/v1/settings", { method: "PATCH", body: JSON.stringify({ switch_on_uses: Number($("switchOnUses").value || 0), failure_threshold: Number($("failureThreshold").value || 0) }) });
       await refreshStatus();
     };
+    $("currentAccountPanel").onclick = async event => {
+      const btn = event.target.closest("button[data-panel-action]");
+      if (!btn) return;
+      const action = btn.dataset.panelAction;
+      if (action === "auth") {
+        await startAuth().catch(e => setMsg(e.message));
+        return;
+      }
+      if (action === "validate-current") {
+        $("validateCurrentBtn").click();
+        return;
+      }
+      if (action === "validate-all") {
+        $("validateAllBtn").click();
+      }
+    };
     $("switchNextBtn").onclick = async () => { await api("/v1/accounts/switch", { method: "POST", body: "{}" }); await refreshAll(); };
     async function startAuth() {
-      await api("/v1/auth/session", { method: "POST", body: "{}" });
-      state.authWindow = window.open(noVncUrl(), "gemini-auth-browser");
+      const data = await api("/v1/auth/session", { method: "POST", body: "{}" });
+      // 后端会根据当前部署地址返回 noVNC 代理链接；缺省时再使用同源兜底地址。
+      state.authWindow = window.open(data.vnc_url || data.novnc_url || noVncUrl(), "gemini-auth-browser");
       if (!state.authWindow) throw new Error("浏览器阻止了弹窗，请允许此站点打开新窗口。");
     }
     $("authOpenBtn").onclick = () => startAuth().catch(e => setMsg(e.message));

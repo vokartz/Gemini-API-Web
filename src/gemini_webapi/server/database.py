@@ -253,6 +253,7 @@ class AccountStore:
         self._ensure_column("media_outputs", "local_content_type", "TEXT")
         self._ensure_column("media_outputs", "local_size", "INTEGER")
         self._ensure_media_tokens()
+        self._backfill_request_log_media_counts()
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
@@ -271,6 +272,29 @@ class AccountStore:
             )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_media_outputs_token ON media_outputs(token)"
+        )
+
+    def _backfill_request_log_media_counts(self) -> None:
+        """按 request_id 回填旧媒体日志的实际媒体数量。"""
+        self.conn.execute(
+            """
+            UPDATE request_logs
+            SET media_count = (
+                SELECT COUNT(*)
+                FROM media_outputs
+                WHERE media_outputs.request_id = request_logs.job_id
+            )
+            WHERE ok = 1
+              AND media_count = 0
+              AND job_id IS NOT NULL
+              AND job_id != ''
+              AND endpoint IN ('/v1/gemini/generate', '/v1/gemini/stream')
+              AND EXISTS (
+                  SELECT 1
+                  FROM media_outputs
+                  WHERE media_outputs.request_id = request_logs.job_id
+              )
+            """
         )
 
     def import_accounts_file(self, path: str | Path | None) -> int:
@@ -626,6 +650,20 @@ class AccountStore:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def update_request_log_media_count(self, request_id: str, media_count: int) -> int:
+        cursor = self.conn.execute(
+            """
+            UPDATE request_logs
+            SET media_count = ?
+            WHERE endpoint IN ('/v1/gemini/generate', '/v1/gemini/stream')
+              AND job_id = ?
+              AND ok = 1
+            """,
+            (max(0, int(media_count)), request_id),
+        )
+        self.conn.commit()
+        return cursor.rowcount
+
     def upsert_job(
         self,
         *,
@@ -784,6 +822,17 @@ class AccountStore:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def clear_media_cooldowns(self, kind: str | None = None) -> int:
+        if kind:
+            cursor = self.conn.execute(
+                "DELETE FROM media_cooldowns WHERE kind = ?",
+                (kind,),
+            )
+        else:
+            cursor = self.conn.execute("DELETE FROM media_cooldowns")
+        self.conn.commit()
+        return cursor.rowcount
+
     def get_media_cooldown(self, account_id: int, kind: str) -> MediaCooldown | None:
         row = self.conn.execute(
             """
@@ -792,7 +841,14 @@ class AccountStore:
             """,
             (account_id, kind),
         ).fetchone()
-        return self._row_to_media_cooldown(row) if row else None
+        if not row:
+            return None
+        cooldown = self._row_to_media_cooldown(row)
+        if self._media_cooldown_is_active(cooldown.blocked_until):
+            return cooldown
+        # 冷却窗口到期后立即清理，避免前端和后续轮换继续看到旧状态。
+        self.clear_media_cooldown(account_id, kind)
+        return None
 
     def list_media_cooldowns(self, kind: str | None = None) -> list[MediaCooldown]:
         if kind:
@@ -804,7 +860,27 @@ class AccountStore:
             rows = self.conn.execute(
                 "SELECT * FROM media_cooldowns ORDER BY updated_at DESC"
             ).fetchall()
-        return [self._row_to_media_cooldown(row) for row in rows]
+        active: list[MediaCooldown] = []
+        expired: list[MediaCooldown] = []
+        for row in rows:
+            cooldown = self._row_to_media_cooldown(row)
+            if self._media_cooldown_is_active(cooldown.blocked_until):
+                active.append(cooldown)
+            else:
+                expired.append(cooldown)
+        for cooldown in expired:
+            self.clear_media_cooldown(cooldown.account_id, cooldown.kind)
+        return active
+
+    @staticmethod
+    def _media_cooldown_is_active(blocked_until: str) -> bool:
+        try:
+            value = datetime.fromisoformat(blocked_until.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value > datetime.now(timezone.utc)
 
     def replace_gems_cache(self, gems: list[dict[str, Any]]) -> None:
         now = utc_now()

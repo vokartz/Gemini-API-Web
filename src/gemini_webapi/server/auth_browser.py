@@ -99,7 +99,7 @@ class AuthBrowserManager:
                 processes=processes,
                 vnc_url=(
                     f"/novnc/vnc.html?autoconnect=true&resize=scale"
-                    f"&path=novnc/websockify"
+                    f"&path=websockify"
                 ),
             )
             return self._session_info(self._session)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import asyncio
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -8,8 +9,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import orjson as json
+import websockets
 from curl_cffi.requests import AsyncSession
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -18,6 +20,7 @@ from ..constants import Model
 from ..exceptions import (
     AuthError,
     GeminiError,
+    MediaGenerationEmptyResult,
     MediaGenerationTemporarilyUnavailable,
     ModelInvalid,
     VideoGenerationFailed,
@@ -104,6 +107,10 @@ class SettingsRequest(BaseModel):
 
 class SwitchAccountRequest(BaseModel):
     account_id: int | None = None
+
+
+class ClearMediaCooldownRequest(BaseModel):
+    kind: str | None = None
 
 
 class AuthClickRequest(BaseModel):
@@ -455,6 +462,24 @@ def _generation_mode_arg(mode: str | None) -> str | None:
     return normalized
 
 
+def _ensure_media_generation_result(output: Any, mode: str | None) -> None:
+    if not mode:
+        return
+    classified = _classified_output(output)
+    has_result = {
+        "image": bool(classified["images"]),
+        "video": bool(classified["videos"]),
+        "audio": bool(classified["media"]),
+    }[mode]
+    if has_result:
+        return
+    labels = {"image": "图片", "video": "视频", "audio": "音频"}
+    # 上游 2xx 但没有媒体结果时必须显式失败，避免调用方把文本/JSON 当成成功媒体任务。
+    raise MediaGenerationEmptyResult(
+        f"{labels[mode]}生成请求已返回，但响应中没有可用的{labels[mode]}结果。"
+    )
+
+
 def _error_status(exc: Exception) -> int:
     if isinstance(exc, AuthError):
         return 401
@@ -466,6 +491,8 @@ def _error_status(exc: Exception) -> int:
         return 502
     if isinstance(exc, MediaGenerationTemporarilyUnavailable):
         return 429
+    if isinstance(exc, MediaGenerationEmptyResult):
+        return 502
     if isinstance(exc, GeminiError):
         return 502
     return 500
@@ -588,6 +615,43 @@ def _media_record_dict(item: Any) -> dict[str, Any]:
     return data
 
 
+def _media_cooldown_summary(status: dict[str, Any]) -> dict[str, Any]:
+    accounts = status.get("accounts") or []
+    active_accounts = [
+        account for account in accounts if account.get("enabled") and not account.get("expired")
+    ]
+    labels = {"image": "图片", "video": "视频", "audio": "音频"}
+    summary: list[dict[str, Any]] = []
+    for kind in ("image", "video", "audio"):
+        blocked: list[dict[str, Any]] = []
+        for account in active_accounts:
+            cooldown = (account.get("media_cooldowns") or {}).get(kind)
+            if not cooldown:
+                continue
+            blocked.append(
+                {
+                    "account_id": account.get("id"),
+                    "account_name": account.get("name"),
+                    "blocked_until": cooldown.get("blocked_until"),
+                    "remaining_seconds": cooldown.get("remaining_seconds", 0),
+                    "reason": cooldown.get("reason", ""),
+                }
+            )
+        blocked.sort(key=lambda item: item.get("remaining_seconds") or 0)
+        summary.append(
+            {
+                "kind": kind,
+                "label": labels[kind],
+                "total": len(active_accounts),
+                "blocked": len(blocked),
+                "available": max(0, len(active_accounts) - len(blocked)),
+                "next": blocked[0] if blocked else None,
+                "accounts": blocked,
+            }
+        )
+    return {"summary": summary, "active_account_count": len(active_accounts)}
+
+
 def _media_host_allowed(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
@@ -707,21 +771,78 @@ def create_app(config: ServerConfig | None = None):
         if request.url.query:
             url = f"{url}?{request.url.query}"
         async with httpx.AsyncClient(timeout=30) as client:
-            proxied = await client.request(
-                request.method,
-                url,
-                headers={
-                    key: value
-                    for key, value in request.headers.items()
-                    if key.lower() not in {"host", "connection"}
-                },
-                content=await request.body(),
-            )
+            try:
+                proxied = await client.request(
+                    request.method,
+                    url,
+                    headers={
+                        key: value
+                        for key, value in request.headers.items()
+                        if key.lower() not in {"host", "connection"}
+                    },
+                    content=await request.body(),
+                )
+            except httpx.HTTPError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="授权浏览器尚未启动，请先在账户设置中点击网页授权。",
+                ) from exc
         return Response(
             content=proxied.content,
             status_code=proxied.status_code,
             media_type=proxied.headers.get("content-type"),
         )
+
+    async def _proxy_novnc_websocket(websocket: WebSocket) -> None:
+        """把管理端同源 WebSocket 转发到容器内 noVNC，避免授权页跨端口不可用。"""
+        await websocket.accept()
+        try:
+            async with websockets.connect("ws://127.0.0.1:6080/websockify") as upstream:
+                async def client_to_upstream() -> None:
+                    try:
+                        while True:
+                            message = await websocket.receive()
+                            if message["type"] == "websocket.disconnect":
+                                await upstream.close()
+                                return
+                            if "bytes" in message and message["bytes"] is not None:
+                                await upstream.send(message["bytes"])
+                            elif "text" in message and message["text"] is not None:
+                                await upstream.send(message["text"])
+                    except WebSocketDisconnect:
+                        await upstream.close()
+
+                async def upstream_to_client() -> None:
+                    async for message in upstream:
+                        if isinstance(message, bytes):
+                            await websocket.send_bytes(message)
+                        else:
+                            await websocket.send_text(message)
+
+                done, pending = await asyncio.wait(
+                    {
+                        asyncio.create_task(client_to_upstream()),
+                        asyncio.create_task(upstream_to_client()),
+                    },
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                for task in done:
+                    task.result()
+        except Exception:
+            try:
+                await websocket.close(code=1011)
+            except RuntimeError:
+                pass
+
+    @app.websocket("/novnc/websockify")
+    async def novnc_websockify(websocket: WebSocket) -> None:
+        await _proxy_novnc_websocket(websocket)
+
+    @app.websocket("/novnc/novnc/websockify")
+    async def novnc_websockify_legacy(websocket: WebSocket) -> None:
+        await _proxy_novnc_websocket(websocket)
 
     @app.api_route("/novnc", methods=["GET", "POST"])
     async def novnc_root(request: Request) -> Response:
@@ -742,6 +863,31 @@ def create_app(config: ServerConfig | None = None):
     @app.get("/v1/status")
     async def status() -> dict[str, Any]:
         return rotator.status()
+
+    @app.get("/v1/media-cooldowns")
+    async def media_cooldowns() -> dict[str, Any]:
+        status_data = rotator.status()
+        return {
+            "ok": True,
+            **_media_cooldown_summary(status_data),
+        }
+
+    @app.post("/v1/media-cooldowns/clear")
+    async def clear_media_cooldowns(request: ClearMediaCooldownRequest) -> dict[str, Any]:
+        kind = (request.kind or "").strip().lower()
+        if kind and kind not in {"audio", "image", "video"}:
+            raise HTTPException(
+                status_code=400,
+                detail="kind must be one of: image, video, audio.",
+            )
+        cleared = store.clear_media_cooldowns(kind or None)
+        status_data = rotator.status()
+        return {
+            "ok": True,
+            "kind": kind or None,
+            "cleared": cleared,
+            **_media_cooldown_summary(status_data),
+        }
 
     @app.get("/v1/settings")
     async def get_settings() -> dict[str, Any]:
@@ -940,33 +1086,36 @@ def create_app(config: ServerConfig | None = None):
     @app.post("/v1/gemini/generate")
     async def gemini_generate(request: GeminiGenerateRequest) -> dict[str, Any]:
         request_id = f"req-{uuid.uuid4().hex}"
-        generation_mode = _generation_mode_arg(request.mode)
-
-        async def operation(client):
-            kwargs: dict[str, Any] = {
-                "temporary": request.temporary,
-                "deep_research": request.deep_research,
-            }
-            resolved_model = _resolve_model_arg(request.model)
-            if resolved_model:
-                kwargs["model"] = resolved_model
-            if generation_mode:
-                kwargs["generation_mode"] = generation_mode
-            gem_arg = await _gem_arg(client, request)
-            if gem_arg:
-                kwargs["gem"] = gem_arg
-            files = _file_paths(request.file_ids)
-            if files:
-                kwargs["files"] = files
-            return await client.generate_content(request.prompt, **kwargs)
-
         try:
+            generation_mode = _generation_mode_arg(request.mode)
+            resolved_model = _resolve_model_arg(request.model)
+
+            async def operation(client):
+                kwargs: dict[str, Any] = {
+                    "temporary": request.temporary,
+                    "deep_research": request.deep_research,
+                }
+                if resolved_model:
+                    kwargs["model"] = resolved_model
+                if generation_mode:
+                    kwargs["generation_mode"] = generation_mode
+                gem_arg = await _gem_arg(client, request)
+                if gem_arg:
+                    kwargs["gem"] = gem_arg
+                files = _file_paths(request.file_ids)
+                if files:
+                    kwargs["files"] = files
+                output = await client.generate_content(request.prompt, **kwargs)
+                _ensure_media_generation_result(output, generation_mode)
+                return output
+
             output = await rotator.run(
                 operation,
                 endpoint="/v1/gemini/generate",
                 model=request.model or "gemini",
                 output_type=f"gemini_{request.mode or 'native'}",
-                require_video_generation=request.mode == "video",
+                job_id=request_id,
+                require_video_generation=generation_mode == "video",
                 media_generation_mode=generation_mode,
             )
         except Exception as exc:
@@ -976,6 +1125,8 @@ def create_app(config: ServerConfig | None = None):
         media_count = _save_media_index(
             request_id=request_id, account_id=account_id, output=output
         )
+        if media_count:
+            store.update_request_log_media_count(request_id, media_count)
         job = None
         if output.deep_research_plan:
             job_id = output.deep_research_plan.research_id or f"dr-{uuid.uuid4().hex}"
@@ -1009,7 +1160,11 @@ def create_app(config: ServerConfig | None = None):
     @app.post("/v1/gemini/stream")
     async def gemini_stream(request: GeminiGenerateRequest):
         request_id = f"req-{uuid.uuid4().hex}"
-        generation_mode = _generation_mode_arg(request.mode)
+        try:
+            generation_mode = _generation_mode_arg(request.mode)
+            resolved_model = _resolve_model_arg(request.model)
+        except Exception as exc:
+            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
 
         async def event_stream():
             final_output = None
@@ -1019,7 +1174,6 @@ def create_app(config: ServerConfig | None = None):
                     "temporary": request.temporary,
                     "deep_research": request.deep_research,
                 }
-                resolved_model = _resolve_model_arg(request.model)
                 if resolved_model:
                     kwargs["model"] = resolved_model
                 if generation_mode:
@@ -1039,7 +1193,8 @@ def create_app(config: ServerConfig | None = None):
                     endpoint="/v1/gemini/stream",
                     model=request.model or "gemini",
                     output_type=f"gemini_{request.mode or 'native'}",
-                    require_video_generation=request.mode == "video",
+                    job_id=request_id,
+                    require_video_generation=generation_mode == "video",
                     media_generation_mode=generation_mode,
                 ):
                     final_output = output
@@ -1057,12 +1212,21 @@ def create_app(config: ServerConfig | None = None):
                 return
 
             if final_output is not None:
+                try:
+                    _ensure_media_generation_result(final_output, generation_mode)
+                except Exception as exc:
+                    error = {"ok": False, "error": str(exc), "status": _error_status(exc)}
+                    yield f"data: {json.dumps(error).decode()}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
                 account_id = rotator.status()["current_account_id"]
                 media_count = _save_media_index(
                     request_id=request_id,
                     account_id=account_id,
                     output=final_output,
                 )
+                if media_count:
+                    store.update_request_log_media_count(request_id, media_count)
                 final = {
                     "type": "final",
                     "ok": True,
@@ -1345,6 +1509,16 @@ def create_app(config: ServerConfig | None = None):
             ],
         }
 
+    @app.get("/v1/accounts")
+    async def list_accounts() -> dict[str, Any]:
+        """返回账户池列表，便于管理端和调试脚本直接读取。"""
+        status = rotator.status()
+        return {
+            "ok": True,
+            "current_account_id": status["current_account_id"],
+            "accounts": status["accounts"],
+        }
+
     @app.post("/v1/accounts")
     async def add_account(request: AccountRequest) -> dict[str, Any]:
         cookies = dict(request.cookies)
@@ -1418,6 +1592,30 @@ def create_app(config: ServerConfig | None = None):
             raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
         return {"ok": True, "validation": result, "accounts": rotator.status()["accounts"]}
 
+    @app.post("/v1/accounts/{account_id}/media-cooldowns/clear")
+    async def clear_account_media_cooldowns(
+        account_id: int, request: ClearMediaCooldownRequest
+    ) -> dict[str, Any]:
+        if store.get_account(account_id) is None:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        kinds = ["audio", "image", "video"] if request.kind is None else [request.kind]
+        cleared: list[str] = []
+        for kind in kinds:
+            normalized = (kind or "").strip().lower()
+            if normalized not in {"audio", "image", "video"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="kind must be one of: image, video, audio.",
+                )
+            if store.clear_media_cooldown(account_id, normalized):
+                cleared.append(normalized)
+        return {
+            "ok": True,
+            "account_id": account_id,
+            "cleared": cleared,
+            "accounts": rotator.status()["accounts"],
+        }
+
     @app.patch("/v1/accounts/{account_id}")
     async def update_account(
         account_id: int, request: AccountToggleRequest
@@ -1486,24 +1684,26 @@ def create_app(config: ServerConfig | None = None):
 
     @app.post("/v1/generate")
     async def generate(request: GenerateRequest) -> dict[str, Any]:
-        generation_mode = _generation_mode_arg(request.mode)
-
-        async def operation(client):
-            kwargs: dict[str, Any] = {"temporary": request.temporary}
-            resolved_model = _resolve_model_arg(request.model)
-            if resolved_model:
-                kwargs["model"] = resolved_model
-            if generation_mode:
-                kwargs["generation_mode"] = generation_mode
-            return await client.generate_content(request.prompt, **kwargs)
-
         try:
+            generation_mode = _generation_mode_arg(request.mode)
+            resolved_model = _resolve_model_arg(request.model)
+
+            async def operation(client):
+                kwargs: dict[str, Any] = {"temporary": request.temporary}
+                if resolved_model:
+                    kwargs["model"] = resolved_model
+                if generation_mode:
+                    kwargs["generation_mode"] = generation_mode
+                output = await client.generate_content(request.prompt, **kwargs)
+                _ensure_media_generation_result(output, generation_mode)
+                return output
+
             output = await rotator.run(
                 operation,
                 endpoint="/v1/generate",
                 model=request.model or "gemini",
                 output_type=f"gemini_{request.mode or 'native'}",
-                require_video_generation=request.mode == "video",
+                require_video_generation=generation_mode == "video",
                 media_generation_mode=generation_mode,
             )
         except Exception as exc:
@@ -1521,6 +1721,10 @@ def create_app(config: ServerConfig | None = None):
             raise HTTPException(status_code=400, detail="messages must contain text.")
         prompt = _append_tool_instructions(prompt, request)
         model = request.model or "gemini"
+        try:
+            resolved_model = _resolve_model_arg(request.model)
+        except Exception as exc:
+            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
 
         if request.stream:
             completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -1532,7 +1736,6 @@ def create_app(config: ServerConfig | None = None):
 
                 async def operation(client):
                     kwargs: dict[str, Any] = {}
-                    resolved_model = _resolve_model_arg(request.model)
                     if resolved_model:
                         kwargs["model"] = resolved_model
                     async for output in client.generate_content_stream(prompt, **kwargs):
@@ -1576,7 +1779,6 @@ def create_app(config: ServerConfig | None = None):
 
         async def operation(client):
             kwargs: dict[str, Any] = {}
-            resolved_model = _resolve_model_arg(request.model)
             if resolved_model:
                 kwargs["model"] = resolved_model
             return await client.generate_content(prompt, **kwargs)

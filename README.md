@@ -11,8 +11,9 @@
 - 支持按调用次数轮换、按错误次数轮换、手动切换账号。
 - OpenAI 兼容接口：`/v1/chat/completions`、`/v1/models`。
 - Gemini 原生接口：生成、流式生成、Gems、Deep Research、文件上传、媒体结果索引。
-- 管理端看板：账户状态、请求统计、失败率、请求日志、媒体结果、任务状态。
-- 媒体结果默认只保存 URL 和元信息，不自动下载文件，避免磁盘持续膨胀。
+- 管理端控制台：请求看板、账户设置、授权登录、Gems、Deep Research、媒体生成和媒体结果。
+- 媒体生成支持 `image`、`video`、`audio` 模式；生成结果会保存索引，并尽量缓存到本地，避免 Gemini 原始链接过期后无法查看。
+- 自用保护：图片/视频/音频生成会记录尝试和冷却状态，媒体额度错误或上游 2xx 但没有产出媒体时默认冷却 5 小时，避免额度异常时反复请求。
 
 ## 快速开始
 
@@ -31,7 +32,7 @@ http://localhost:7860
 授权浏览器通过管理端的“网页授权”按钮打开。noVNC/websockify 会在授权会话启动后临时运行，管理端会返回可访问的授权链接，通常是：
 
 ```text
-http://localhost:7860/novnc/vnc.html
+http://localhost:7860/novnc/vnc.html?autoconnect=true&resize=scale&path=websockify
 ```
 
 默认数据目录是本机 `./data`，容器内映射为 `/app/data`。SQLite 数据库默认保存到：
@@ -40,7 +41,31 @@ http://localhost:7860/novnc/vnc.html
 data/app.db
 ```
 
+媒体缓存默认保存到：
+
+```text
+data/media-cache/
+```
+
 真实数据库、Cookie 文件和本地状态不会提交到 Git。
+
+## 更新 Docker 镜像
+
+本项目默认使用本地源码构建镜像。更新代码后重新构建并替换容器：
+
+```sh
+git pull
+docker compose --progress plain build
+docker compose up -d
+```
+
+如果只是修改了 `docker-compose.yml` 或环境变量，也可以直接执行：
+
+```sh
+docker compose up -d --build
+```
+
+运行数据保存在 `data/`，重建镜像不会清空 SQLite、媒体缓存或已保存账号。
 
 ## 添加账号
 
@@ -50,7 +75,7 @@ data/app.db
 2. 进入“账户设置”
 3. 点击“网页授权”
 4. 在弹出的 noVNC 浏览器中登录 Google/Gemini
-5. 回到管理端点击“保存当前登录”
+5. 回到管理端点击“保存授权 Cookie”
 
 也可以复制示例文件后导入：
 
@@ -146,6 +171,8 @@ curl http://localhost:7860/v1/chat/completions \
 - `gemini-3.5-flash`：快速模型。
 - `gemini-3.1-flash-lite`：轻量快速模型。
 
+旧模型名和未知模型名会被拒绝，例如 `gemini-3-pro`、`gemini-3-flash`、`gemini-3-flash-thinking` 不再透传到底层。
+
 ## Gemini 原生接口
 
 原生生成：
@@ -158,6 +185,24 @@ curl http://localhost:7860/v1/gemini/generate \
     "prompt": "生成一段简短介绍"
   }'
 ```
+
+指定媒体生成模式：
+
+```sh
+curl http://localhost:7860/v1/gemini/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "mode": "image",
+    "prompt": "生成一张赛博朋克风格的猫"
+  }'
+```
+
+`mode` 可选：
+
+- `image`：图片生成。
+- `video`：视频生成。视频任务未确认提交时会返回 409，不计入本次视频尝试。
+- `audio`：音频/音乐生成。
 
 响应会返回分类输出：
 
@@ -184,6 +229,72 @@ curl http://localhost:7860/v1/gemini/generate \
 }
 ```
 
+媒体结果会写入 `media_outputs` 表。接口返回的媒体项包含：
+
+- `url`：Gemini 返回的原始地址，可能短期有效或需要账号 Cookie。
+- `content_url`：本服务提供的缓存/代理访问地址，管理端优先使用它预览。
+- `cached`：是否已经缓存到本地 `data/media-cache/`。
+
+查看媒体历史：
+
+```sh
+curl "http://localhost:7860/v1/gemini/media?limit=20"
+```
+
+访问媒体内容：
+
+```text
+http://localhost:7860/v1/gemini/media/{media_token}/content
+```
+
+说明：
+
+- 新生成媒体会尽量立刻下载到本地缓存。
+- 如果没有缓存，本服务会使用生成账号的 Cookie 代理原始链接。
+- 如果 Gemini 返回登录页或 HTML 中间页，接口会返回 502，而不会把 HTML 当成图片/视频返回。
+- 单个媒体代理/缓存大小上限为 100MB。
+- 图片、视频、音频触发额度错误后会按账号和媒体类型写入冷却状态，默认 5 小时后恢复尝试。
+- 明确指定 `mode=image|video|audio` 时，如果上游返回 2xx 但没有对应媒体结果，也会写入该账号该媒体类型的 5 小时冷却。
+- 可通过 `GET /v1/media-cooldowns` 查看全局媒体冷却汇总，判断当前账号池是否还能继续生成图片、视频或音频。
+- 确认额度已恢复时，可通过 `POST /v1/media-cooldowns/clear` 清除全局媒体冷却；也可以在看板媒体冷却卡片上按类型清除。
+
+媒体冷却汇总示例：
+
+```sh
+curl http://localhost:7860/v1/media-cooldowns
+```
+
+```json
+{
+  "ok": true,
+  "active_account_count": 2,
+  "summary": [
+    {
+      "kind": "video",
+      "label": "视频",
+      "total": 2,
+      "blocked": 1,
+      "available": 1,
+      "next": {
+        "account_id": 1,
+        "account_name": "main",
+        "remaining_seconds": 7200
+      }
+    }
+  ]
+}
+```
+
+清除某一类媒体冷却：
+
+```sh
+curl http://localhost:7860/v1/media-cooldowns/clear \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"video"}'
+```
+
+`kind` 可选 `image`、`video`、`audio`；不传 `kind` 时会清除全部媒体冷却。
+
 原生流式接口：
 
 ```sh
@@ -208,7 +319,21 @@ curl http://localhost:7860/v1/gemini/stream \
 - `POST /v1/gemini/files`
 - `GET /v1/gemini/files`
 - `GET /v1/gemini/media`
+- `GET /v1/gemini/media/{media_token}/content`
 - `GET /v1/gemini/jobs`
+
+## 管理端页面
+
+访问 `http://localhost:7860` 后可以使用以下页面：
+
+- `请求看板`：查看账号、请求数、失败率、模型使用情况、媒体冷却概览和请求日志。
+- `原生生成`：测试 Gemini 原生输出，支持文本、分类输出、附件和 Gems。
+- `Gems`：查看、创建、更新、删除自定义 system prompt。
+- `Deep Research`：创建研究计划、启动、轮询状态和查看结果。
+- `媒体结果`：上方生成图片/视频/音频，下方查看媒体历史和缓存/代理链接。
+- `账户设置`：调整轮换策略、授权操作、导入/导出/验证/切换账号，并可手动解除账号媒体冷却。
+
+请求日志会记录输出类型、任务/请求 id、媒体数量和错误信息；媒体生成完成后会回填实际 `media_count`，方便在看板里判断图片、视频或音频是否真正产出。早期没有 `job_id/request_id` 的历史日志无法可靠关联媒体结果，会保留原始计数。
 
 ## 管理接口
 
@@ -216,6 +341,8 @@ curl http://localhost:7860/v1/gemini/stream \
 
 - `GET /health`
 - `GET /v1/status`
+- `GET /v1/media-cooldowns`
+- `POST /v1/media-cooldowns/clear`
 - `GET /v1/request-logs`
 - `GET /v1/settings`
 - `PATCH /v1/settings`
@@ -226,8 +353,14 @@ curl http://localhost:7860/v1/gemini/stream \
 - `POST /v1/accounts/import`
 - `GET /v1/accounts/export`
 - `POST /v1/accounts/switch`
+- `POST /v1/accounts/validate`
+- `POST /v1/accounts/validate-all`
+- `POST /v1/accounts/{account_id}/validate`
+- `POST /v1/accounts/{account_id}/media-cooldowns/clear`
 - `POST /v1/auth/session`
 - `POST /v1/auth/save`
+
+账号列表和当前账号状态通过 `GET /v1/status` 返回。
 
 ## 持久化数据
 
@@ -237,11 +370,12 @@ SQLite 表包括：
 - `runtime_state`：当前账号、轮换策略。
 - `request_logs`：请求日志。
 - `jobs`：Deep Research 和长任务状态。
-- `media_outputs`：图片、视频、音频等媒体结果索引。
+- `media_outputs`：图片、视频、音频等媒体结果索引、本地缓存路径和代理 token。
+- `media_cooldowns`：媒体生成冷却状态，额度错误默认 5 小时后恢复尝试，避免额度不足时持续请求。
 - `gems_cache`：Gems 缓存。
 - `gemini_files`：上传文件记录。
 
-默认只需要备份 `data/app.db`。如果使用 `data/accounts.json` 导入账号，也请自行安全保存。
+默认至少备份 `data/app.db`。如果希望保留已生成媒体，还需要备份 `data/media-cache/`。如果使用 `data/accounts.json` 导入账号，也请自行安全保存。
 
 ## 开发
 
