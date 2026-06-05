@@ -494,6 +494,93 @@ class ServerEndpointTests(unittest.TestCase):
                 )
                 self.assertEqual(missing.status_code, 404)
 
+    def test_responses_endpoint_is_openai_compatible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp)
+            config = ServerConfig(
+                database_path=config.database_path,
+                accounts_file=config.accounts_file,
+                switch_on_uses=config.switch_on_uses,
+                failure_threshold=config.failure_threshold,
+                immediate_switch_status_codes=config.immediate_switch_status_codes,
+                proxy=config.proxy,
+                request_timeout=config.request_timeout,
+                auto_refresh=config.auto_refresh,
+                auth_url=config.auth_url,
+                auth_headless=config.auth_headless,
+                api_keys=("sk-external",),
+                host=config.host,
+                port=config.port,
+                admin_password="admin-pass",
+                admin_session_secret="session-secret",
+            )
+            app = create_app(config)
+            calls = []
+
+            async def fake_init(self, *args, **kwargs):
+                self.client = FakeSession()
+                self.account_status = AccountStatus.AVAILABLE
+
+            async def fake_close(self):
+                self.client = None
+
+            async def fake_generate_content(self, prompt, **kwargs):
+                calls.append((prompt, kwargs))
+                return ModelOutput(
+                    metadata=["cid", "rid"],
+                    candidates=[Candidate(rcid="rcid", text="response ok")],
+                )
+
+            with (
+                patch.object(GeminiClient, "init", fake_init),
+                patch.object(GeminiClient, "close", fake_close),
+                patch.object(GeminiClient, "generate_content", fake_generate_content),
+                TestClient(app) as client,
+            ):
+                app.state.store.upsert_account(
+                    secure_1psid="psid-one",
+                    cookies={"__Secure-1PSID": "psid-one"},
+                    name="one",
+                )
+                unauthenticated = client.post(
+                    "/v1/responses",
+                    json={"model": "gemini", "input": "hello"},
+                )
+                response = client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk-external"},
+                    json={
+                        "model": "gemini-3.5-flash",
+                        "input": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "input_text", "text": "请看图"},
+                                    {
+                                        "type": "input_image",
+                                        "image_url": "https://example.com/a.png",
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                )
+                stream = client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk-external"},
+                    json={"model": "gemini", "input": "hello", "stream": True},
+                )
+
+            self.assertEqual(unauthenticated.status_code, 401)
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["object"], "response")
+            self.assertEqual(data["output_text"], "response ok")
+            self.assertEqual(data["output"][0]["content"][0]["type"], "output_text")
+            self.assertIn("Image URL: https://example.com/a.png", calls[0][0])
+            self.assertEqual(calls[0][1]["model"], "gemini-3.5-flash")
+            self.assertEqual(stream.status_code, 400)
+
     def test_console_media_generation_can_store_media_to_object_storage(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(self._config(tmp))

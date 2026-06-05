@@ -222,6 +222,19 @@ curl http://localhost:7860/v1/chat/completions \
 
 说明：OpenAI 兼容接口会把图片 URL 转成 Gemini 可读的文本引用，不会在服务端下载或转存图片；需要文件上传时请使用 Gemini 原生 `/v1/gemini/files`。
 
+Responses API：
+
+```sh
+curl http://localhost:7860/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "input": "只回复 OK"
+  }'
+```
+
+`/v1/responses` 支持 `input` 字符串或 Responses 风格消息数组，并返回 `output_text`；当前暂不支持 `stream=true`，流式调用请继续使用 `/v1/chat/completions`。
+
 常用模型：
 
 - `gemini`：默认映射到 Gemini 3.1 Pro。

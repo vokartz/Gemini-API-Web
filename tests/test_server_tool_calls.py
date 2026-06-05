@@ -5,6 +5,8 @@ from gemini_webapi.server.app import (
     ChatMessage,
     _append_tool_instructions,
     _messages_to_prompt,
+    _responses_input_to_messages,
+    _responses_output,
     _tool_calls_from_output_text,
 )
 
@@ -24,6 +26,42 @@ WEATHER_TOOL = {
 
 
 class ServerToolCallTests(unittest.TestCase):
+    def test_responses_input_converts_to_messages(self):
+        messages = _responses_input_to_messages(
+            [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "保持简洁"}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "看图"},
+                        {"type": "input_image", "image_url": "https://example.com/a.png"},
+                    ],
+                },
+            ]
+        )
+        prompt = _messages_to_prompt(messages)
+
+        self.assertIn("System: 保持简洁", prompt)
+        self.assertIn("User: 看图", prompt)
+        self.assertIn("Image URL: https://example.com/a.png", prompt)
+
+    def test_responses_output_shape(self):
+        data = _responses_output(
+            response_id="resp_1",
+            model="gemini",
+            text="hello",
+            created=123,
+        )
+
+        self.assertEqual(data["id"], "resp_1")
+        self.assertEqual(data["object"], "response")
+        self.assertEqual(data["created_at"], 123)
+        self.assertEqual(data["output_text"], "hello")
+        self.assertEqual(data["output"][0]["content"][0]["type"], "output_text")
+
     def test_messages_include_multimodal_image_urls(self):
         prompt = _messages_to_prompt(
             [

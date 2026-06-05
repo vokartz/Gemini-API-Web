@@ -212,6 +212,15 @@ class ChatCompletionRequest(BaseModel):
     parallel_tool_calls: bool | None = None
 
 
+class ResponsesRequest(BaseModel):
+    model: str | None = None
+    input: str | list[Any]
+    stream: bool = False
+    temperature: float | None = None
+    max_output_tokens: int | None = None
+    top_p: float | None = None
+
+
 MODEL_ALIASES = {
     "gemini": "gemini-3.1-pro",
 }
@@ -289,6 +298,68 @@ def _messages_to_prompt(messages: list[ChatMessage]) -> str:
                 continue
             prompt_parts.append(f"User: {text}")
     return "\n\n".join(prompt_parts)
+
+
+def _responses_input_to_messages(input_value: str | list[Any]) -> list[ChatMessage]:
+    """将 OpenAI Responses API 的 input 字段转换成现有 Chat Completions 消息。"""
+    if isinstance(input_value, str):
+        return [ChatMessage(role="user", content=input_value)]
+    messages: list[ChatMessage] = []
+    for item in input_value:
+        if isinstance(item, str):
+            messages.append(ChatMessage(role="user", content=item))
+            continue
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "user")
+        content = item.get("content")
+        if isinstance(content, str) or content is None:
+            messages.append(ChatMessage(role=role, content=content))
+        elif isinstance(content, list):
+            parts = [part for part in content if isinstance(part, dict)]
+            messages.append(ChatMessage(role=role, content=parts))
+    return messages
+
+
+def _responses_output(
+    *,
+    response_id: str,
+    model: str,
+    text: str,
+    created: int | None = None,
+) -> dict[str, Any]:
+    """返回 OpenAI Responses API 的基础响应结构。"""
+    output_id = f"msg_{uuid.uuid4().hex}"
+    content_id = f"out_{uuid.uuid4().hex}"
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": created or int(time.time()),
+        "status": "completed",
+        "model": model,
+        "output_text": text,
+        "output": [
+            {
+                "id": output_id,
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "id": content_id,
+                        "type": "output_text",
+                        "text": text,
+                        "annotations": [],
+                    }
+                ],
+            }
+        ],
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        },
+    }
 
 
 def _tools_enabled(request: ChatCompletionRequest) -> bool:
@@ -982,6 +1053,7 @@ def create_app(config: ServerConfig | None = None):
             external_api_path = path in {
                 "/v1/models",
                 "/v1/chat/completions",
+                "/v1/responses",
                 "/v1/generate",
                 "/v1/gemini/generate",
                 "/v1/gemini/stream",
@@ -2131,6 +2203,43 @@ def create_app(config: ServerConfig | None = None):
             "metadata": output.metadata,
             "account": rotator.status()["current_account_id"],
         }
+
+    @app.post("/v1/responses")
+    async def responses(request: ResponsesRequest) -> dict[str, Any]:
+        if request.stream:
+            raise HTTPException(
+                status_code=400,
+                detail="/v1/responses stream is not supported yet. Use /v1/chat/completions with stream=true.",
+            )
+        messages = _responses_input_to_messages(request.input)
+        prompt = _messages_to_prompt(messages)
+        if not prompt:
+            raise HTTPException(status_code=400, detail="input must contain text.")
+        model = request.model or "gemini"
+        try:
+            resolved_model = _resolve_model_arg(request.model)
+        except Exception as exc:
+            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
+
+        async def operation(client):
+            kwargs: dict[str, Any] = {}
+            if resolved_model:
+                kwargs["model"] = resolved_model
+            return await client.generate_content(prompt, **kwargs)
+
+        try:
+            output = await rotator.run(
+                operation,
+                endpoint="/v1/responses",
+                model=model,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
+        return _responses_output(
+            response_id=f"resp_{uuid.uuid4().hex}",
+            model=model,
+            text=output.text,
+        )
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: ChatCompletionRequest):
