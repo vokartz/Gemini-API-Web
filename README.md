@@ -122,6 +122,7 @@ environment:
   ADMIN_PASSWORD: ""
   ADMIN_SESSION_SECRET: ""
   API_KEYS: ""
+  CORS_ALLOW_ORIGINS: "*"
 ```
 
 含义：
@@ -135,6 +136,7 @@ environment:
 - `ADMIN_PASSWORD`：管理员密码。为空时不启用管理端登录，适合本地自用；服务器部署建议设置。
 - `ADMIN_SESSION_SECRET`：管理员会话签名密钥。服务器部署建议设置为一段随机长字符串。
 - `API_KEYS`：外部调用鉴权密钥，多个值可用英文逗号分隔；也可以在管理端“系统设置”里生成和管理。
+- `CORS_ALLOW_ORIGINS`：允许浏览器跨域调用的来源，默认 `*`。公网部署时建议改成你的面板域名，多个来源用英文逗号分隔。
 
 ## 管理员登录与外部鉴权
 
@@ -147,7 +149,7 @@ ADMIN_PASSWORD=your-admin-password docker compose up -d --build
 也可以同时配置固定会话密钥和外部 API Key：
 
 ```sh
-ADMIN_PASSWORD=your-admin-password ADMIN_SESSION_SECRET=change-me-to-a-random-secret API_KEYS=sk-your-external-key docker compose up -d --build
+ADMIN_PASSWORD=your-admin-password ADMIN_SESSION_SECRET=change-me-to-a-random-secret API_KEYS=sk-your-external-key CORS_ALLOW_ORIGINS=https://your-panel.example.com docker compose up -d --build
 ```
 
 启用后：
@@ -155,6 +157,7 @@ ADMIN_PASSWORD=your-admin-password ADMIN_SESSION_SECRET=change-me-to-a-random-se
 - `http://localhost:7860` 会显示管理员登录页。
 - 控制台和管理接口需要管理员 Cookie。
 - `/v1/models`、`/v1/chat/completions`、`/v1/gemini/generate` 等外部接口不使用管理员登录鉴权，而是使用 `Authorization: Bearer <API_KEY>`。
+- 浏览器环境跨域调用会返回 CORS 头；服务器公网部署时建议把 `CORS_ALLOW_ORIGINS` 收紧为可信域名。
 - 未配置任何 `API_KEYS` 且管理端系统设置中没有 API Key 时，外部接口保持无密钥模式，便于本地调试；服务器部署建议生成或配置 API Key。
 
 ## OpenAI 兼容接口

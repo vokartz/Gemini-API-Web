@@ -84,6 +84,47 @@ class ServerEndpointTests(unittest.TestCase):
             port=7860,
         )
 
+    def test_cors_preflight_supports_external_browser_clients(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp)
+            config = ServerConfig(
+                database_path=config.database_path,
+                accounts_file=config.accounts_file,
+                switch_on_uses=config.switch_on_uses,
+                failure_threshold=config.failure_threshold,
+                immediate_switch_status_codes=config.immediate_switch_status_codes,
+                proxy=config.proxy,
+                request_timeout=config.request_timeout,
+                auto_refresh=config.auto_refresh,
+                auth_url=config.auth_url,
+                auth_headless=config.auth_headless,
+                api_keys=("sk-external",),
+                host=config.host,
+                port=config.port,
+                cors_allow_origins=("https://panel.example.com",),
+            )
+            app = create_app(config)
+            with TestClient(app) as client:
+                response = client.options(
+                    "/v1/chat/completions",
+                    headers={
+                        "Origin": "https://panel.example.com",
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "authorization,content-type",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.headers.get("access-control-allow-origin"),
+                    "https://panel.example.com",
+                )
+                self.assertIn(
+                    "authorization",
+                    response.headers.get("access-control-allow-headers", "").lower(),
+                )
+                self.assertEqual(client.get("/v1/models").status_code, 401)
+
     def test_parse_candidate_falls_back_to_nested_video_urls(self):
         client = GeminiClient()
         candidate_data = [

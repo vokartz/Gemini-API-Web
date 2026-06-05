@@ -33,6 +33,18 @@ def _env_codes(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(codes)
 
 
+def _env_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    values: list[str] = []
+    for item in raw.split(","):
+        value = item.strip()
+        if value:
+            values.append(value)
+    return tuple(values)
+
+
 @dataclass(frozen=True)
 class ServerConfig:
     database_path: Path
@@ -50,6 +62,7 @@ class ServerConfig:
     port: int
     admin_password: str | None = None
     admin_session_secret: str = ""
+    cors_allow_origins: tuple[str, ...] = ("*",)
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -90,4 +103,5 @@ class ServerConfig:
             port=_env_int("PORT", 7860, minimum=1),
             admin_password=os.getenv("ADMIN_PASSWORD") or None,
             admin_session_secret=os.getenv("ADMIN_SESSION_SECRET", ""),
+            cors_allow_origins=_env_list("CORS_ALLOW_ORIGINS", ("*",)),
         )

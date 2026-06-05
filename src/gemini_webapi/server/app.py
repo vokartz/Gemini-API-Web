@@ -16,6 +16,7 @@ import websockets
 import httpx
 from curl_cffi.requests import AsyncSession
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -912,6 +913,14 @@ def create_app(config: ServerConfig | None = None):
         store.close()
 
     app = FastAPI(title="gemini-webapi server", version="0.1.0", lifespan=lifespan)
+    # 外部 Web 面板或浏览器 SDK 调用需要 CORS；服务器部署时可通过环境变量收紧来源。
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(config.cors_allow_origins),
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -929,6 +938,8 @@ def create_app(config: ServerConfig | None = None):
     @app.middleware("http")
     async def bearer_auth(request: Request, call_next):
         path = request.url.path
+        if request.method == "OPTIONS":
+            return await call_next(request)
         # 管理端登录只保护控制台和管理接口；OpenAI 兼容接口仍由外部 API Key 鉴权。
         admin_public_paths = {
             "/health",
