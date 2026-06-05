@@ -24,6 +24,30 @@ WEATHER_TOOL = {
 
 
 class ServerToolCallTests(unittest.TestCase):
+    def test_messages_include_multimodal_image_urls(self):
+        prompt = _messages_to_prompt(
+            [
+                ChatMessage(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": "请分析这张图"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.com/cat.png"},
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.com/dog.png",
+                        },
+                    ],
+                )
+            ]
+        )
+
+        self.assertIn("请分析这张图", prompt)
+        self.assertIn("Image URL: https://example.com/cat.png", prompt)
+        self.assertIn("Image URL: https://example.com/dog.png", prompt)
+
     def test_chat_request_accepts_openai_tools(self):
         request = ChatCompletionRequest.model_validate(
             {

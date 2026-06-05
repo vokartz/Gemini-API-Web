@@ -195,6 +195,27 @@ curl http://localhost:7860/v1/chat/completions \
   }'
 ```
 
+多模态消息中的 `image_url` 会被保留为图片链接提示，适合外部 OpenAI 兼容客户端传入图片 URL：
+
+```sh
+curl http://localhost:7860/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "请分析这张图片" },
+          { "type": "image_url", "image_url": { "url": "https://example.com/image.png" } }
+        ]
+      }
+    ]
+  }'
+```
+
+说明：OpenAI 兼容接口会把图片 URL 转成 Gemini 可读的文本引用，不会在服务端下载或转存图片；需要文件上传时请使用 Gemini 原生 `/v1/gemini/files`。
+
 常用模型：
 
 - `gemini`：默认映射到 Gemini 3.1 Pro。

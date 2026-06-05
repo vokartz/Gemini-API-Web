@@ -245,8 +245,21 @@ def _message_content_to_text(content: str | list[dict[str, Any]] | None) -> str:
         return content
     parts: list[str] = []
     for item in content:
-        if item.get("type") == "text" and isinstance(item.get("text"), str):
+        item_type = item.get("type")
+        if item_type in {"text", "input_text"} and isinstance(item.get("text"), str):
             parts.append(item["text"])
+        elif item_type in {"image_url", "input_image"}:
+            # OpenAI 多模态消息里的图片 URL 转成明确的文本引用，避免外部客户端传图时被静默丢弃。
+            image_url = item.get("image_url")
+            url = ""
+            if isinstance(image_url, str):
+                url = image_url
+            elif isinstance(image_url, dict) and isinstance(image_url.get("url"), str):
+                url = image_url["url"]
+            elif isinstance(item.get("url"), str):
+                url = item["url"]
+            if url:
+                parts.append(f"Image URL: {url}")
     return "\n".join(parts)
 
 
