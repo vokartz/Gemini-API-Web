@@ -464,6 +464,80 @@ class ServerEndpointTests(unittest.TestCase):
                     "https://lh3.googleusercontent.com/demo.png",
                 )
 
+    def test_api_media_generation_keeps_proxy_when_store_media_not_requested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(self._config(tmp))
+
+            async def fake_init(self, *args, **kwargs):
+                self.client = FakeSession()
+                self.account_status = AccountStatus.AVAILABLE
+
+            async def fake_close(self):
+                self.client = None
+
+            async def fake_generate_content(self, prompt, **kwargs):
+                return ModelOutput(
+                    metadata=["cid", "rid"],
+                    candidates=[
+                        Candidate(
+                            rcid="rcid",
+                            text="ok",
+                            generated_images=[
+                                GeneratedImage(
+                                    url="https://lh3.googleusercontent.com/demo.png",
+                                    title="generated",
+                                )
+                            ],
+                        )
+                    ],
+                )
+
+            async def fail_upload(**kwargs):
+                raise AssertionError("API calls must not upload media to object storage")
+
+            with (
+                patch.object(GeminiClient, "init", fake_init),
+                patch.object(GeminiClient, "close", fake_close),
+                patch.object(GeminiClient, "generate_content", fake_generate_content),
+                patch("gemini_webapi.server.app.httpx.Client", FakeMediaHTTPClient),
+                patch("gemini_webapi.server.app.upload_s3_compatible", fail_upload),
+                TestClient(app) as client,
+            ):
+                app.state.store.upsert_account(
+                    secure_1psid="psid-one",
+                    cookies={"__Secure-1PSID": "psid-one"},
+                    name="one",
+                )
+                app.state.store.set_json_state(
+                    "system_settings",
+                    {
+                        "api_keys": [],
+                        "object_storage": {
+                            "enabled": True,
+                            "endpoint": "https://s3.example.test",
+                            "region": "auto",
+                            "bucket": "media",
+                            "access_key_id": "access",
+                            "secret_access_key": "secret",
+                            "prefix": "gemini-web",
+                            "public_url": "https://cdn.example.test",
+                            "force_path_style": True,
+                        },
+                    },
+                )
+                response = client.post(
+                    "/v1/gemini/generate",
+                    json={
+                        "prompt": "make image",
+                        "mode": "image",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                media = client.get("/v1/gemini/media").json()["media"][0]
+                self.assertFalse(media["stored"])
+                self.assertEqual(media["url"], "https://lh3.googleusercontent.com/demo.png")
+
     def test_gemini_generate_media_mode_requires_media_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(
