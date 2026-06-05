@@ -956,6 +956,14 @@ class AccountStore:
         ).fetchall()
         return [self._row_to_file(row) for row in rows]
 
+    def delete_file(self, file_id: str) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "DELETE FROM gemini_files WHERE id = ?",
+                (file_id,),
+            )
+        return cursor.rowcount > 0
+
     def _row_to_account(self, row: sqlite3.Row) -> Account:
         return Account(
             id=int(row["id"]),

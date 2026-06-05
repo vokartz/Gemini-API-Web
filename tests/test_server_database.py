@@ -52,6 +52,24 @@ class TestAccountStore(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_deletes_uploaded_file_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = AccountStore(Path(tmp) / "app.db")
+            try:
+                store.add_file(
+                    file_id="file-test",
+                    filename="demo.txt",
+                    content_type="text/plain",
+                    path=str(Path(tmp) / "demo.txt"),
+                    size=4,
+                )
+                self.assertIsNotNone(store.get_file("file-test"))
+                self.assertTrue(store.delete_file("file-test"))
+                self.assertIsNone(store.get_file("file-test"))
+                self.assertFalse(store.delete_file("file-test"))
+            finally:
+                store.close()
+
     def test_persists_native_runtime_records(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = AccountStore(Path(tmp) / "app.db")

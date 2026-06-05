@@ -220,7 +220,25 @@ curl http://localhost:7860/v1/chat/completions \
   }'
 ```
 
-说明：OpenAI 兼容接口会把图片 URL 转成 Gemini 可读的文本引用，不会在服务端下载或转存图片；需要文件上传时请使用 Gemini 原生 `/v1/gemini/files`。
+说明：OpenAI 兼容接口会把图片 URL 转成 Gemini 可读的文本引用，不会在服务端下载或转存图片；需要上传附件时可以使用 OpenAI 兼容 `/v1/files`，返回的 `file-...` 也可继续用于 Gemini 原生接口。
+
+OpenAI 兼容文件接口：
+
+```sh
+curl http://localhost:7860/v1/files \
+  -H "Authorization: Bearer sk-your-external-key" \
+  -F "purpose=assistants" \
+  -F "file=@./sample.pdf"
+```
+
+```sh
+curl http://localhost:7860/v1/files
+curl http://localhost:7860/v1/files/file-xxxx
+curl http://localhost:7860/v1/files/file-xxxx/content
+curl -X DELETE http://localhost:7860/v1/files/file-xxxx
+```
+
+`/v1/files`、`/v1/files/{file_id}`、`/v1/files/{file_id}/content` 和 `DELETE /v1/files/{file_id}` 使用 OpenAI 常见的文件对象结构；文件内容保存在本地 `data/uploads/`，不会自动上传到 Gemini，实际调用时请在 Gemini 原生接口的 `file_ids` 中引用。
 
 Responses API：
 

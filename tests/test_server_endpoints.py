@@ -597,6 +597,84 @@ class ServerEndpointTests(unittest.TestCase):
             self.assertEqual(calls[0][1]["model"], "gemini-3.5-flash")
             self.assertEqual(stream.status_code, 400)
 
+    def test_openai_files_endpoint_reuses_gemini_file_storage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp)
+            config = ServerConfig(
+                database_path=config.database_path,
+                accounts_file=config.accounts_file,
+                switch_on_uses=config.switch_on_uses,
+                failure_threshold=config.failure_threshold,
+                immediate_switch_status_codes=config.immediate_switch_status_codes,
+                proxy=config.proxy,
+                request_timeout=config.request_timeout,
+                auto_refresh=config.auto_refresh,
+                auth_url=config.auth_url,
+                auth_headless=config.auth_headless,
+                api_keys=("sk-external",),
+                host=config.host,
+                port=config.port,
+                admin_password="admin-pass",
+                admin_session_secret="session-secret",
+            )
+            app = create_app(config)
+            with TestClient(app) as client:
+                unauthenticated = client.get("/v1/files")
+                upload = client.post(
+                    "/v1/files",
+                    headers={"Authorization": "Bearer sk-external"},
+                    files={"file": ("demo.txt", b"hello", "text/plain")},
+                    data={"purpose": "assistants"},
+                )
+                file_id = upload.json()["id"]
+                record = app.state.store.get_file(file_id)
+                file_exists_before_delete = Path(record.path).is_file()
+                listed = client.get(
+                    "/v1/files",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
+                fetched = client.get(
+                    f"/v1/files/{file_id}",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
+                content = client.get(
+                    f"/v1/files/{file_id}/content",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
+                native = client.get(
+                    "/v1/gemini/files",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
+                deleted = client.delete(
+                    f"/v1/files/{file_id}",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
+                missing = client.get(
+                    f"/v1/files/{file_id}",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
+
+            self.assertEqual(unauthenticated.status_code, 401)
+            self.assertEqual(upload.status_code, 200)
+            self.assertEqual(upload.json()["object"], "file")
+            self.assertEqual(upload.json()["filename"], "demo.txt")
+            self.assertEqual(upload.json()["bytes"], 5)
+            self.assertIsNotNone(record)
+            self.assertTrue(file_exists_before_delete)
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual(listed.json()["object"], "list")
+            self.assertEqual(listed.json()["data"][0]["id"], file_id)
+            self.assertEqual(fetched.status_code, 200)
+            self.assertEqual(fetched.json()["id"], file_id)
+            self.assertEqual(content.status_code, 200)
+            self.assertEqual(content.content, b"hello")
+            self.assertEqual(native.status_code, 200)
+            self.assertEqual(native.json()["files"][0]["id"], file_id)
+            self.assertEqual(deleted.status_code, 200)
+            self.assertTrue(deleted.json()["deleted"])
+            self.assertFalse(Path(record.path).exists())
+            self.assertEqual(missing.status_code, 404)
+
     def test_openai_image_generation_endpoint_returns_urls(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(tmp)

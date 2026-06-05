@@ -8,6 +8,7 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -993,6 +994,27 @@ def _file_dict(file_record: Any) -> dict[str, Any]:
     return file_record.__dict__
 
 
+def _openai_file_object(file_record: Any) -> dict[str, Any]:
+    created_at = 0
+    try:
+        created_at = int(
+            datetime.fromisoformat(
+                file_record.created_at.replace("Z", "+00:00")
+            ).timestamp()
+        )
+    except Exception:
+        created_at = int(time.time())
+    return {
+        "id": file_record.id,
+        "object": "file",
+        "bytes": file_record.size,
+        "created_at": created_at,
+        "filename": file_record.filename,
+        "purpose": "assistants",
+        "status": "processed",
+    }
+
+
 def _gem_dict(gem: Any) -> dict[str, Any]:
     return {
         "id": gem.id,
@@ -1093,7 +1115,9 @@ def create_app(config: ServerConfig | None = None):
                 "/v1/gemini/stream",
                 "/v1/gemini/media",
                 "/v1/gemini/files",
+                "/v1/files",
             } or path.startswith("/v1/models/") or _public_media_content_path(path)
+            external_api_path = external_api_path or path.startswith("/v1/files/")
             if not admin_ok and not external_api_path:
                 return JSONResponse(
                     status_code=401,
@@ -1429,8 +1453,8 @@ def create_app(config: ServerConfig | None = None):
     async def list_files(limit: int = 80) -> dict[str, Any]:
         return {"files": [_file_dict(item) for item in store.list_files(limit=limit)]}
 
-    @app.post("/v1/gemini/files")
-    async def upload_file(file: UploadFile = File(...)) -> dict[str, Any]:
+    async def _save_uploaded_file(file: UploadFile) -> Any:
+        # 上传文件统一落到 data/uploads，OpenAI 兼容和 Gemini 原生接口共享同一个 file_id。
         file_id = f"file-{uuid.uuid4().hex}"
         upload_dir = Path(config.database_path).resolve().parent / "uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -1446,9 +1470,71 @@ def create_app(config: ServerConfig | None = None):
             path=str(dest),
             size=len(data),
         )
+        return store.get_file(file_id)
+
+    @app.post("/v1/gemini/files")
+    async def upload_file(file: UploadFile = File(...)) -> dict[str, Any]:
+        record = await _save_uploaded_file(file)
         return {
             "ok": True,
-            "file": _file_dict(store.get_file(file_id)),
+            "file": _file_dict(record),
+        }
+
+    @app.get("/v1/files")
+    async def openai_list_files(limit: int = 80) -> dict[str, Any]:
+        return {
+            "object": "list",
+            "data": [
+                _openai_file_object(item)
+                for item in store.list_files(limit=max(1, min(limit, 500)))
+            ],
+        }
+
+    @app.post("/v1/files")
+    async def openai_upload_file(
+        file: UploadFile = File(...),
+        purpose: str | None = None,
+    ) -> dict[str, Any]:
+        record = await _save_uploaded_file(file)
+        return _openai_file_object(record)
+
+    @app.get("/v1/files/{file_id}")
+    async def openai_get_file(file_id: str) -> dict[str, Any]:
+        record = store.get_file(file_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="File not found.")
+        return _openai_file_object(record)
+
+    @app.get("/v1/files/{file_id}/content")
+    async def openai_get_file_content(file_id: str) -> Response:
+        record = store.get_file(file_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="File not found.")
+        path = Path(record.path)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="File content not found.")
+        return FileResponse(
+            path,
+            media_type=record.content_type or "application/octet-stream",
+            filename=record.filename,
+        )
+
+    @app.delete("/v1/files/{file_id}")
+    async def openai_delete_file(file_id: str) -> dict[str, Any]:
+        record = store.get_file(file_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="File not found.")
+        deleted = store.delete_file(file_id)
+        path = Path(record.path)
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        return {
+            "id": file_id,
+            "object": "file",
+            "deleted": bool(deleted),
         }
 
     async def _gem_arg(client: Any, request: GeminiGenerateRequest) -> str | None:
