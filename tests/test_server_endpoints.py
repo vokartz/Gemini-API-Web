@@ -459,6 +459,41 @@ class ServerEndpointTests(unittest.TestCase):
                 self.assertEqual(client.get("/v1/request-logs").status_code, 200)
                 self.assertEqual(client.post("/v1/admin/logout", json={}).status_code, 200)
 
+    def test_model_detail_endpoint_is_openai_compatible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp)
+            config = ServerConfig(
+                database_path=config.database_path,
+                accounts_file=config.accounts_file,
+                switch_on_uses=config.switch_on_uses,
+                failure_threshold=config.failure_threshold,
+                immediate_switch_status_codes=config.immediate_switch_status_codes,
+                proxy=config.proxy,
+                request_timeout=config.request_timeout,
+                auto_refresh=config.auto_refresh,
+                auth_url=config.auth_url,
+                auth_headless=config.auth_headless,
+                api_keys=("sk-external",),
+                host=config.host,
+                port=config.port,
+                admin_password="admin-pass",
+                admin_session_secret="session-secret",
+            )
+            app = create_app(config)
+            with TestClient(app) as client:
+                response = client.get(
+                    "/v1/models/gemini-3.1-pro",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["id"], "gemini-3.1-pro")
+                self.assertEqual(response.json()["object"], "model")
+                missing = client.get(
+                    "/v1/models/gemini-3-pro",
+                    headers={"Authorization": "Bearer sk-external"},
+                )
+                self.assertEqual(missing.status_code, 404)
+
     def test_console_media_generation_can_store_media_to_object_storage(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(self._config(tmp))

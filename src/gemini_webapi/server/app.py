@@ -497,6 +497,16 @@ def _openai_model_ids() -> list[str]:
     ]
 
 
+def _openai_model_object(model_id: str, created: int | None = None) -> dict[str, Any]:
+    """返回 OpenAI 兼容模型对象，供模型列表和单模型查询共用。"""
+    return {
+        "id": model_id,
+        "object": "model",
+        "created": created or int(time.time()),
+        "owned_by": "google",
+    }
+
+
 def _resolve_model_arg(model: str | None) -> str | None:
     if not model:
         return None
@@ -977,7 +987,7 @@ def create_app(config: ServerConfig | None = None):
                 "/v1/gemini/stream",
                 "/v1/gemini/media",
                 "/v1/gemini/files",
-            } or path.startswith("/v1/gemini/media/")
+            } or path.startswith("/v1/models/") or path.startswith("/v1/gemini/media/")
             if not admin_ok and not external_api_path:
                 return JSONResponse(
                     status_code=401,
@@ -1906,16 +1916,16 @@ def create_app(config: ServerConfig | None = None):
         now = int(time.time())
         return {
             "object": "list",
-            "data": [
-                {
-                    "id": model_id,
-                    "object": "model",
-                    "created": now,
-                    "owned_by": "google",
-                }
-                for model_id in _openai_model_ids()
-            ],
+            "data": [_openai_model_object(model_id, now) for model_id in _openai_model_ids()],
         }
+
+    @app.get("/v1/models/{model_id}")
+    async def model_detail(model_id: str) -> dict[str, Any]:
+        try:
+            _resolve_model_arg(model_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _openai_model_object(model_id)
 
     @app.get("/v1/accounts")
     async def list_accounts() -> dict[str, Any]:

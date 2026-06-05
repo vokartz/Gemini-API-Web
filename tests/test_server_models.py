@@ -7,6 +7,7 @@ from gemini_webapi.server.app import (
     _generation_mode_arg,
     _media_host_allowed,
     _media_record_dict,
+    _openai_model_object,
     _openai_model_ids,
     _resolve_model_arg,
 )
@@ -55,6 +56,17 @@ class ServerModelTests(unittest.TestCase):
                 "gemini-3.5-flash",
                 "gemini-3.1-pro",
             ],
+        )
+
+    def test_openai_model_object_shape(self):
+        self.assertEqual(
+            _openai_model_object("gemini-3.1-pro", 123),
+            {
+                "id": "gemini-3.1-pro",
+                "object": "model",
+                "created": 123,
+                "owned_by": "google",
+            },
         )
 
     def test_static_model_enum_keeps_only_current_real_models(self):

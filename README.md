@@ -168,6 +168,12 @@ ADMIN_PASSWORD=your-admin-password ADMIN_SESSION_SECRET=change-me-to-a-random-se
 curl http://localhost:7860/v1/models
 ```
 
+查询单个模型：
+
+```sh
+curl http://localhost:7860/v1/models/gemini-3.1-pro
+```
+
 聊天补全：
 
 ```sh
