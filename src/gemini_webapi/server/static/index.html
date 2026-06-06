@@ -1325,10 +1325,6 @@ print(resp.choices[0].message.content)</code></pre>
       return { image: "Görsel", web_image: "Web Görseli", video: "Video", audio: "Ses", media: "Medya" }[kind] || kind || "Medya";
     }
     function playableMediaUrl(item) {
-      const kind = item.kind || item.type || "media";
-      if ((kind === "image" || kind === "web_image") && item.url) {
-        return item.url;
-      }
       return item.cached ? (item.content_url || item.url || item.thumbnail || "") : (item.content_url || "");
     }
     function mediaItemMarkup(item, index = 0) {
