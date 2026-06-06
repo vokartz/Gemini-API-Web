@@ -1652,14 +1652,8 @@ def create_app(config: ServerConfig | None = None):
             return {}
 
     def _full_size_image_url(url: str) -> str:
-        # Üretilen görsel URL'sini önizleme yerine tam boyuta yükseltir (kütüphane ile aynı mantık).
-        if "=s0" in url:
-            return url
-        if "=s1024-rj" in url:
-            return url.replace("=s1024-rj", "=s0")
-        if "=s2048-rj" in url:
-            return url.replace("=s2048-rj", "=s0")
-        return f"{url}=s0"
+        # Üretilen görsel URL'sini olduğu gibi kullan (herhangi bir çözünürlük sınırı dayatmadan).
+        return url
 
     def _download_media_item(item: dict[str, Any], full_size: bool = False) -> dict[str, Any]:
         url = item.get("url") or ""

@@ -438,13 +438,8 @@ async def cmd_download(args):
     from curl_cffi.requests import AsyncSession
 
     url = args.url
-    # Append =s0 for full-size if not already specified for googleusercontent.com images
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
-    if host == "googleusercontent.com" or host.endswith(".googleusercontent.com"):
-        last_segment = parsed.path.rsplit("/", 1)[-1]
-        if "=" not in last_segment:
-            url += "=s0"
+    # Use URL as is
+    pass
 
     output = args.output
     if not output:
