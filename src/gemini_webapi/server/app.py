@@ -625,6 +625,19 @@ def _resolve_model_arg(model: str | None) -> str | None:
     return resolved
 
 
+GEM_DEFAULT_PROMPT = "Merhaba"
+
+
+def _effective_prompt(prompt: str | None, gem_arg: str | None) -> str:
+    # Bir gem seçildiğinde kullanıcının boş istek göndermesine izin vermek için, prompt boşsa
+    # gem'i başlatan varsayılan bir mesaj kullanılır. Gemini boş prompt'u kabul etmediğinden
+    # (client tarafında `assert prompt`) bu olmadan gem-only gönderim başarısız olur.
+    text = prompt or ""
+    if gem_arg and not text.strip():
+        return GEM_DEFAULT_PROMPT
+    return text
+
+
 def _generation_mode_arg(mode: str | None) -> str | None:
     normalized = (mode or "").strip().lower()
     if not normalized:
@@ -1044,6 +1057,7 @@ def create_app(config: ServerConfig | None = None):
         proxy=config.proxy,
         request_timeout=config.request_timeout,
         auto_refresh=config.auto_refresh,
+        account_refresh_interval=config.account_refresh_interval,
     )
     auth_browser = AuthBrowserManager(
         store,
@@ -1056,6 +1070,7 @@ def create_app(config: ServerConfig | None = None):
         app.state.store = store
         app.state.rotator = rotator
         app.state.auth_browser = auth_browser
+        rotator.start_background_refresh()
         yield
         await auth_browser.close()
         await rotator.close()
@@ -1712,7 +1727,9 @@ def create_app(config: ServerConfig | None = None):
                 files = _file_paths(request.file_ids)
                 if files:
                     kwargs["files"] = files
-                output = await client.generate_content(request.prompt, **kwargs)
+                output = await client.generate_content(
+                    _effective_prompt(request.prompt, gem_arg), **kwargs
+                )
                 _ensure_media_generation_result(output, generation_mode)
                 return output
 
@@ -1794,7 +1811,9 @@ def create_app(config: ServerConfig | None = None):
                 files = _file_paths(request.file_ids)
                 if files:
                     kwargs["files"] = files
-                async for output in client.generate_content_stream(request.prompt, **kwargs):
+                async for output in client.generate_content_stream(
+                    _effective_prompt(request.prompt, gem_arg), **kwargs
+                ):
                     yield output
 
             try:

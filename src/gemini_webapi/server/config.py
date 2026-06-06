@@ -55,6 +55,7 @@ class ServerConfig:
     proxy: str | None
     request_timeout: float
     auto_refresh: bool
+    account_refresh_interval: float
     auth_url: str
     auth_headless: bool
     api_keys: tuple[str, ...]
@@ -91,6 +92,9 @@ class ServerConfig:
             request_timeout=float(os.getenv("REQUEST_TIMEOUT", "300")),
             auto_refresh=os.getenv("GEMINI_AUTO_REFRESH", "true").lower()
             not in {"0", "false", "no"},
+            account_refresh_interval=float(
+                _env_int("ACCOUNT_REFRESH_INTERVAL", 900, minimum=60)
+            ),
             auth_url=os.getenv("GEMINI_AUTH_URL", "https://gemini.google.com/"),
             auth_headless=os.getenv("GEMINI_AUTH_HEADLESS", "false").lower()
             in {"1", "true", "yes"},

@@ -166,6 +166,21 @@
     }
     button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
     button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    button.is-loading { cursor: progress; }
+    button.is-loading::before {
+      content: "";
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 6px;
+      vertical-align: -1px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: btn-spin 0.7s linear infinite;
+    }
+    @keyframes btn-spin { to { transform: rotate(360deg); } }
     button.soft { background: var(--accent-soft); color: var(--accent); border-color: var(--line-strong); }
     button.danger { color: var(--danger); border-color: #e9b8b1; background: #fffafa; }
     button:hover {
@@ -463,6 +478,7 @@
       <button data-tab="media">Medya Sonuçları</button>
       <button data-tab="accounts">Hesap Ayarları</button>
       <button data-tab="system">Sistem Ayarları</button>
+      <button data-tab="apidocs">API Dokümanı</button>
     </nav>
 
     <div id="dashboard" class="view active">
@@ -763,6 +779,116 @@
         </div>
       </section>
     </div>
+
+    <div id="apidocs" class="view">
+      <section>
+        <div class="section-head">
+          <h2>OpenAI Uyumlu API Dokümanı</h2>
+          <button id="copyApiBaseBtn">Temel URL'yi Kopyala</button>
+        </div>
+        <div class="content stack">
+          <div class="notice">
+            Bu sunucu, OpenAI uyumlu uç noktalar sunar. Mevcut OpenAI SDK'larını yalnızca
+            <code>base_url</code> ve <code>api_key</code> değerlerini değiştirerek kullanabilirsiniz.
+            API Key oluşturmak için <strong>Sistem Ayarları</strong> sekmesini kullanın.
+          </div>
+
+          <div class="split">
+            <label>Temel URL (base_url)<input id="apiBaseInput" readonly></label>
+            <label>Kimlik Doğrulama<input value="Authorization: Bearer &lt;API_KEY&gt;" readonly></label>
+          </div>
+
+          <details class="raw-json" open>
+            <summary>Modeller</summary>
+            <pre>gemini                 → varsayılan (gemini-3.1-pro takma adı)
+gemini-3.1-pro
+gemini-3.5-flash
+gemini-3.1-flash-lite</pre>
+          </details>
+
+          <details class="raw-json" open>
+            <summary>GET /v1/models — Model listesi</summary>
+            <pre><code class="api-snippet">curl __BASE__/v1/models \
+  -H "Authorization: Bearer $API_KEY"</code></pre>
+          </details>
+
+          <details class="raw-json" open>
+            <summary>POST /v1/chat/completions — Sohbet (Chat Completions)</summary>
+            <pre><code class="api-snippet">curl __BASE__/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "messages": [{"role": "user", "content": "Merhaba!"}]
+  }'</code></pre>
+          </details>
+
+          <details class="raw-json">
+            <summary>POST /v1/chat/completions — Akış (stream: true)</summary>
+            <pre><code class="api-snippet">curl -N __BASE__/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "messages": [{"role": "user", "content": "Bir hikaye anlat"}],
+    "stream": true
+  }'</code></pre>
+          </details>
+
+          <details class="raw-json">
+            <summary>Python (openai SDK)</summary>
+            <pre><code class="api-snippet">from openai import OpenAI
+
+client = OpenAI(
+    base_url="__BASE__/v1",
+    api_key="$API_KEY",
+)
+
+resp = client.chat.completions.create(
+    model="gemini",
+    messages=[{"role": "user", "content": "Merhaba!"}],
+)
+print(resp.choices[0].message.content)</code></pre>
+          </details>
+
+          <details class="raw-json">
+            <summary>POST /v1/images/generations — Görsel üretimi</summary>
+            <pre><code class="api-snippet">curl __BASE__/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "prompt": "Gün batımında bir dağ manzarası",
+    "n": 1
+  }'</code></pre>
+          </details>
+
+          <details class="raw-json">
+            <summary>POST /v1/responses — Responses API</summary>
+            <pre><code class="api-snippet">curl __BASE__/v1/responses \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "input": "Merhaba!"
+  }'</code></pre>
+          </details>
+
+          <details class="raw-json">
+            <summary>POST /v1/files — Dosya yükleme (çok parçalı / multipart)</summary>
+            <pre><code class="api-snippet">curl __BASE__/v1/files \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@belge.pdf"</code></pre>
+          </details>
+
+          <div class="hint">
+            Not: Yukarıdaki örneklerde <code>$API_KEY</code> yerine kendi anahtarınızı,
+            <code>__BASE__</code> yerine ise yukarıdaki Temel URL'yi yazın (kod blokları zaten
+            mevcut sunucu adresiyle otomatik doldurulur).
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
 
   <div id="manualModal" class="modal-backdrop">
@@ -812,6 +938,26 @@
     }
     function setMsg(message) { $("healthText").textContent = message; }
     function showJson(id, data) { $(id).textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2); }
+    function setBtnLoading(btn, on, label) {
+      if (!btn) return;
+      if (on) {
+        if (btn.dataset.origText === undefined) btn.dataset.origText = btn.textContent;
+        btn.disabled = true;
+        btn.classList.add("is-loading");
+        btn.textContent = label || "Üretiliyor...";
+      } else {
+        btn.disabled = false;
+        btn.classList.remove("is-loading");
+        if (btn.dataset.origText !== undefined) {
+          btn.textContent = btn.dataset.origText;
+          delete btn.dataset.origText;
+        }
+      }
+    }
+    function showPreviewLoading(id, message) {
+      const el = $(id);
+      if (el) el.innerHTML = `<div class="media-preview-empty">${esc(message)}</div>`;
+    }
     function esc(value) { return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
     function fmt(value) { const d = new Date(value); return Number.isNaN(d.getTime()) ? (value || "-") : d.toLocaleString(); }
     function fmtDuration(seconds) {
@@ -1282,6 +1428,7 @@
       if (btn.dataset.tab === "gems") refreshGems().catch(e => setMsg(e.message));
       if (btn.dataset.tab === "media") refreshMedia().catch(e => setMsg(e.message));
       if (btn.dataset.tab === "system") refreshSystemSettings().catch(e => setMsg(e.message));
+      if (btn.dataset.tab === "apidocs") renderApiDocs();
     });
     document.body.onclick = event => {
       const close = event.target.closest("[data-close-modal]");
@@ -1333,7 +1480,11 @@
     $("manualOpenBtn").onclick = () => openModal("manualModal");
     $("saveAuthBtn").onclick = () => openModal("authSaveModal");
 
-    $("nativeGenerateBtn").onclick = async () => {
+    $("nativeGenerateBtn").onclick = async event => {
+      const btn = event.currentTarget;
+      setBtnLoading(btn, true, "Üretiliyor...");
+      showJson("nativeOutput", "Üretiliyor, lütfen bekleyin...");
+      showPreviewLoading("nativePreview", "Üretiliyor, lütfen bekleyin...");
       try {
         const data = await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await nativePayload()) });
         renderGeneratedPreview("nativePreview", data);
@@ -1343,20 +1494,32 @@
       } catch (e) {
         renderGeneratedPreview("nativePreview", null);
         showJson("nativeOutput", e.message);
+      } finally {
+        setBtnLoading(btn, false);
       }
     };
-    $("nativeStreamBtn").onclick = async () => {
+    $("nativeStreamBtn").onclick = async event => {
+      const btn = event.currentTarget;
+      setBtnLoading(btn, true, "Akış bekleniyor...");
       try {
-        $("nativeOutput").textContent = "";
+        $("nativeOutput").textContent = "Akış bekleniyor, lütfen bekleyin...";
         const res = await fetch("/v1/gemini/stream", { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(await nativePayload()) });
         const text = await res.text();
         $("nativeOutput").textContent = text;
         await refreshAll();
-      } catch (e) { showJson("nativeOutput", e.message); }
+      } catch (e) {
+        showJson("nativeOutput", e.message);
+      } finally {
+        setBtnLoading(btn, false);
+      }
     };
-    $("mediaGenerateBtn").onclick = async () => {
+    $("mediaGenerateBtn").onclick = async event => {
+      const btn = event.currentTarget;
+      if (!$("mediaGeneratePrompt").value.trim()) return setMsg("Lütfen medya oluşturma açıklaması girin");
+      setBtnLoading(btn, true, "Üretiliyor...");
+      showJson("mediaGenerateOutput", "Üretiliyor, lütfen bekleyin...");
+      showPreviewLoading("mediaGeneratePreview", "Medya üretiliyor, lütfen bekleyin...");
       try {
-        if (!$("mediaGeneratePrompt").value.trim()) return setMsg("Lütfen medya oluşturma açıklaması girin");
         const data = await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await mediaPayload()) });
         renderGeneratedPreview("mediaGeneratePreview", data);
         showJson("mediaGenerateOutput", data);
@@ -1366,6 +1529,8 @@
       } catch (e) {
         renderGeneratedPreview("mediaGeneratePreview", null);
         showJson("mediaGenerateOutput", e.message);
+      } finally {
+        setBtnLoading(btn, false);
       }
     };
     $("uploadFileBtn").onclick = () => uploadSelectedFiles("nativeFile", "files", "fileInfo").catch(e => setMsg(e.message));
@@ -1571,6 +1736,26 @@
       await refreshAll();
       setMsg(data.validation.valid ? "Yetkilendirme Çerezi kaydedildi ve doğrulandı" : `Yetkilendirme Çerezi kaydedildi ancak doğrulama başarısız oldu: ${data.validation.message}`);
     };
+
+    function renderApiDocs() {
+      const base = location.origin;
+      const apiKey = localStorage.getItem("gemini-api-key") || "$API_KEY";
+      const baseInput = $("apiBaseInput");
+      if (baseInput) baseInput.value = base;
+      document.querySelectorAll("#apidocs .api-snippet").forEach(el => {
+        if (el.dataset.tpl === undefined) el.dataset.tpl = el.textContent;
+        el.textContent = el.dataset.tpl.replaceAll("__BASE__", base).replaceAll("$API_KEY", apiKey);
+      });
+    }
+    $("copyApiBaseBtn").onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(location.origin);
+        setMsg("Temel URL kopyalandı");
+      } catch {
+        setMsg("Kopyalama başarısız oldu, lütfen elle kopyalayın");
+      }
+    };
+    renderApiDocs();
 
     boot().catch(e => setMsg(e.message));
     setInterval(() => {

@@ -497,6 +497,23 @@ class AccountStore:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def update_account_cookies(
+        self,
+        account_id: int,
+        secure_1psidts: str | None,
+        cookies: dict[str, str] | None = None,
+    ) -> bool:
+        # Arka plan döndürmesiyle tazelenen __Secure-1PSIDTS değerini kalıcı yazar; böylece
+        # yeniden başlatmadan sonra da en güncel cookie kullanılır. Validation/enabled/failure
+        # alanlarına dokunmaz, yalnızca cookie değerlerini günceller.
+        cookies_json = json.dumps(cookies or {}, ensure_ascii=True, sort_keys=True)
+        cursor = self.conn.execute(
+            "UPDATE accounts SET secure_1psidts = ?, cookies_json = ?, updated_at = ? WHERE id = ?",
+            (secure_1psidts, cookies_json, utc_now(), account_id),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
     def set_account_validation(
         self,
         account_id: int,

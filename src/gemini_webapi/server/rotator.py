@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, TypeVar
 
@@ -18,6 +18,8 @@ from ..exceptions import (
     VideoGenerationFailed,
     VideoGenerationNotSubmitted,
 )
+from ..utils import logger
+from ..utils.rotate_1psidts import _extract_cookie_value, rotate_1psidts
 from .database import Account, AccountStore
 
 T = TypeVar("T")
@@ -57,6 +59,7 @@ class AccountRotator:
         proxy: str | None = None,
         request_timeout: float = 300,
         auto_refresh: bool = True,
+        account_refresh_interval: float = 900,
     ):
         self.store = store
         self.switch_on_uses = switch_on_uses
@@ -65,10 +68,20 @@ class AccountRotator:
         self.proxy = proxy
         self.request_timeout = request_timeout
         self.auto_refresh = auto_refresh
+        self.account_refresh_interval = max(60.0, float(account_refresh_interval))
         self._slots: dict[int, ClientSlot] = {}
         self._lock = asyncio.Lock()
+        self._refresh_task: asyncio.Task | None = None
+
+    def start_background_refresh(self) -> None:
+        """Tüm aktif hesapların cookie'lerini periyodik olarak tazeleyen arka plan görevini başlatır."""
+        if self._refresh_task is None or self._refresh_task.done():
+            self._refresh_task = asyncio.create_task(self._account_refresh_loop())
 
     async def close(self) -> None:
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
+            self._refresh_task = None
         for slot in self._slots.values():
             await slot.client.close()
         self._slots.clear()
@@ -251,6 +264,7 @@ class AccountRotator:
 
             if count_usage:
                 await self._handle_success(slot.account.id)
+            self._persist_slot_cookies(slot)
             self._append_request_log(
                 account=slot.account,
                 endpoint=endpoint,
@@ -367,6 +381,7 @@ class AccountRotator:
 
         if count_usage:
             await self._handle_success(slot.account.id)
+        self._persist_slot_cookies(slot)
         self._append_request_log(
             account=slot.account,
             endpoint=endpoint,
@@ -443,7 +458,7 @@ class AccountRotator:
         index = ids.index(current_id)
         return active[index:] + active[:index]
 
-    async def _get_slot(self, account: Account) -> ClientSlot:
+    async def _get_slot(self, account: Account, *, record_status: bool = True) -> ClientSlot:
         slot = self._slots.get(account.id)
         if slot is None:
             client = GeminiClient(
@@ -467,7 +482,8 @@ class AccountRotator:
                 auto_refresh=self.auto_refresh,
             )
             status = getattr(slot.client, "account_status", AccountStatus.AVAILABLE)
-            self._record_account_status(account.id, status)
+            if record_status:
+                self._record_account_status(account.id, status)
             if status != AccountStatus.AVAILABLE:
                 await slot.client.close()
                 slot.initialized = False
@@ -476,6 +492,62 @@ class AccountRotator:
                 )
             slot.initialized = True
         return slot
+
+    def _persist_slot_cookies(self, slot: ClientSlot) -> None:
+        """Döndürülen __Secure-1PSIDTS ve google.com cookie'lerini veritabanına kalıcı yazar."""
+        try:
+            cookies = slot.client.cookies
+            new_psidts = _extract_cookie_value(cookies, "__Secure-1PSIDTS")
+            if not new_psidts or new_psidts == slot.account.secure_1psidts:
+                return
+            cookie_map: dict[str, str] = {}
+            for cookie in cookies.jar:
+                domain = (cookie.domain or "").lstrip(".").lower()
+                if not (domain == "google.com" or domain.endswith(".google.com")):
+                    continue
+                if cookie.name and cookie.value:
+                    cookie_map[cookie.name] = cookie.value
+            cookie_map.setdefault("__Secure-1PSID", slot.account.secure_1psid)
+            cookie_map["__Secure-1PSIDTS"] = new_psidts
+            self.store.update_account_cookies(slot.account.id, new_psidts, cookie_map)
+            slot.account = replace(
+                slot.account, secure_1psidts=new_psidts, cookies=cookie_map
+            )
+        except Exception as exc:
+            logger.debug(
+                f"Failed to persist refreshed cookies for account {slot.account.id}: {exc}"
+            )
+
+    async def _account_refresh_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.account_refresh_interval)
+            try:
+                await self._refresh_all_accounts()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug(f"Account refresh cycle failed: {exc}")
+
+    async def _refresh_all_accounts(self) -> None:
+        # Yalnızca o an kullanılan hesabın değil, tüm etkin hesapların cookie'leri tazelenir;
+        # böylece otomatik eklenmiş ama henüz kullanılmamış hesaplar da süresi dolmadan canlı kalır.
+        # Bu arka plan görevi yalnızca cookie döndürür ve kalıcı yazar; hesapları doğrulamaz/expired
+        # işaretlemez (record_status=False). Bir hesabın gerçekten geçersiz olup olmadığı, ancak gerçek
+        # bir istek başarısız olduğunda _handle_failure tarafından belirlenir.
+        for account in self.store.get_active_accounts():
+            try:
+                async with self._lock:
+                    slot = await self._get_slot(account, record_status=False)
+                    session = getattr(slot.client, "client", None)
+                    if session is not None:
+                        await rotate_1psidts(session)
+                    self._persist_slot_cookies(slot)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug(
+                    f"Failed to refresh cookies for account {account.id}: {exc}"
+                )
 
     async def _probe_account(self, account: Account) -> dict[str, Any]:
         client = GeminiClient(
