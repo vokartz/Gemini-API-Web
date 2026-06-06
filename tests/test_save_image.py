@@ -48,10 +48,9 @@ class TestGeminiClient(unittest.IsolatedAsyncioTestCase):
 
             await image.save(verbose=True, full_size=False)
             await image.save(verbose=True, full_size=True)
-            self.assertNotEqual(
-                image.url,
-                original_url,
-                "Test failed: Expected URL to be resolved to RPC URL.",
+            self.assertFalse(
+                "=s0" in image.url,
+                "Test failed: Fallback occurred despite expecting RPC success.",
             )
 
             image.url = original_url
@@ -61,10 +60,9 @@ class TestGeminiClient(unittest.IsolatedAsyncioTestCase):
             ) as mock_rpc:
                 mock_rpc.side_effect = Exception("Simulated RPC failure for testing")
                 await image.save(verbose=True, full_size=True)
-                self.assertEqual(
-                    image.url,
-                    original_url,
-                    "Test failed: Expected URL to remain unmodified when RPC fails.",
+                self.assertTrue(
+                    "=s0" in image.url,
+                    "Test failed: Expected fallback to =s0 but did not happen.",
                 )
 
     async def test_save_image_to_image(self):

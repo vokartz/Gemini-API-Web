@@ -1335,24 +1335,18 @@ print(resp.choices[0].message.content)</code></pre>
       const trustedInline = item.cached || item.stored || !item.id || kind === "video";
       const canInline = Boolean(url && trustedInline);
       const preview = !canInline
-        ? `<div class="media-preview-empty">Geçmiş medya önbelleğe alınmamış, aşağıdaki bağlantıya tıklayarak hesap vekili (proxy) üzerinden açmayı deneyebilirsiniz.</div>`
+        ? `<a href="${esc(url || item.url)}" target="_blank" class="media-preview-empty" style="display: block; text-decoration: none; color: inherit;">Geçmiş medya önbelleğe alınmamış, tıklayarak açmayı deneyebilirsiniz.</a>`
         : kind === "image" || kind === "web_image"
-          ? `<div class="media-preview"><img src="${esc(url)}" alt="${esc(title)}" loading="lazy"></div>`
+          ? `<a href="${esc(url)}" target="_blank" class="media-preview" style="display: block; width: 100%; height: 100%;"><img src="${esc(url)}" alt="${esc(title)}" loading="lazy"></a>`
           : kind === "video"
             ? `<div class="media-preview"><video src="${esc(url)}" controls preload="metadata" ${thumb ? `poster="${esc(thumb)}"` : ""}></video></div>`
             : kind === "audio"
               ? `<audio src="${esc(url)}" controls preload="metadata"></audio>`
-              : `<div class="media-preview-empty">Yerleşik önizleme henüz desteklenmiyor, sonucu açarak kontrol edebilirsiniz.</div>`;
+              : `<a href="${esc(url)}" target="_blank" class="media-preview-empty" style="display: block; text-decoration: none; color: inherit;">Yerleşik önizleme henüz desteklenmiyor, açmak için tıklayın.</a>`;
       return `
         <div class="media-card">
           <div class="row"><span class="pill">${esc(mediaKindLabel(kind))}</span>${item.cached ? `<span class="pill current">Önbelleğe Alındı</span>` : `<span class="pill off">Vekil (Proxy)</span>`}<span class="hint">${esc(fmt(item.created_at || ""))}</span></div>
-          ${url ? preview : `<div class="media-preview-empty">Sonuçta erişilebilir URL bulunamadı.</div>`}
-          <div class="media-title">${esc(title)}</div>
-          ${item.url ? `<div class="hint media-url" title="${esc(item.url)}">${esc(item.url)}</div>` : ""}
-          <div class="media-actions">
-            ${url ? `<a href="${esc(url)}" target="_blank">Önbellek/Vekil Bağlantısını Aç</a>` : ""}
-            ${item.url && item.url !== url ? `<a href="${esc(item.url)}" target="_blank">Kaynak Bağlantı</a>` : ""}
-          </div>
+          ${url || item.url ? preview : `<div class="media-preview-empty">Sonuçta erişilebilir URL bulunamadı.</div>`}
         </div>
       `;
     }

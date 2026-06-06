@@ -251,8 +251,12 @@ class GeneratedImage(Image):
                         f"Failed to fetch full size image URL via RPC: {e}, falling back to default URL suffix."
                     )
 
-            # If RPC fails or is not available, leave the URL as is (no resolution limit suffix forced)
-            pass
+            if "=s1024-rj" in self.url:
+                self.url = self.url.replace("=s1024-rj", "=s0")
+            elif "=s2048-rj" in self.url:
+                self.url = self.url.replace("=s2048-rj", "=s0")
+            elif "=s0" not in self.url:
+                self.url += "=s0"
         else:
             if "=s2048-rj" in self.url:
                 self.url = self.url.replace("=s2048-rj", "=s1024-rj")
