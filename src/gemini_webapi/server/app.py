@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..constants import Model
+from ..utils import logger
 from ..exceptions import (
     AuthError,
     GeminiError,
@@ -1627,27 +1628,45 @@ def create_app(config: ServerConfig | None = None):
                 "content_type": content_type,
                 "size": len(content),
             }
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"Tam boyutlu görsel indirilemedi, önizlemeye düşülüyor: {exc}")
             return {}
 
     def _strip_watermark_bytes(content: bytes) -> dict[str, Any]:
         # Üretilen her görselin Gemini filigranı, kaydedilmeden önce kaldırılır. Filigran kaldırma
         # ters alfa harmanlamayla görselin yerel (native) çözünürlüğünde çalışır; bu yüzden bu adım
-        # yalnızca tam-boyut indirme sonrası uygulanır. pillow/numpy yoksa sessizce atlanır.
+        # yalnızca tam-boyut indirme sonrası uygulanır. pillow/numpy yoksa adım atlanır.
         try:
             from ..utils.remover import remove_watermark_bytes
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Filigran kaldırma atlandı: 'pillow' ve 'numpy' kurulu değil "
+                f"(pip install -e '.[server]'). Ayrıntı: {exc}"
+            )
             return {}
         try:
             cleaned = remove_watermark_bytes(content, output_format="PNG")
             return {"content": cleaned, "content_type": "image/png", "size": len(cleaned)}
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"Filigran kaldırma başarısız oldu: {exc}")
             return {}
 
-    def _download_media_item(item: dict[str, Any]) -> dict[str, Any]:
+    def _full_size_image_url(url: str) -> str:
+        # Üretilen görsel URL'sini önizleme yerine tam boyuta yükseltir (kütüphane ile aynı mantık).
+        if "=s2048-rj" in url:
+            return url
+        if "=s1024-rj" in url:
+            return url.replace("=s1024-rj", "=s2048-rj")
+        return f"{url}=s2048-rj"
+
+    def _download_media_item(item: dict[str, Any], full_size: bool = False) -> dict[str, Any]:
         url = item.get("url") or ""
         if not url or not _media_host_allowed(url):
             return {}
+        # Üretilen görsellerde RPC tabanlı tam-boyut yolu kullanılamadığında bile önizleme yerine
+        # en az 2048px'lik tam boyutu indir.
+        if full_size and item.get("kind") == "image":
+            url = _full_size_image_url(url)
         try:
             account = store.get_account(rotator.status()["current_account_id"])
             cookies = account.cookies if account else None
@@ -1665,7 +1684,8 @@ def create_app(config: ServerConfig | None = None):
                 "content_type": content_type,
                 "size": len(content),
             }
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"Medya indirilemedi ({item.get('kind')}): {exc}")
             return {}
 
     def _cache_downloaded_media(item: dict[str, Any], downloaded: dict[str, Any]) -> dict[str, Any]:
@@ -1731,12 +1751,13 @@ def create_app(config: ServerConfig | None = None):
         image_objs = _generated_image_map(output)
         for item in _media_entries(output):
             downloaded: dict[str, Any] = {}
-            if item.get("kind") == "image":
+            is_generated_image = item.get("kind") == "image"
+            if is_generated_image:
                 image_obj = image_objs.get(item.get("image_id"))
                 if image_obj is not None:
                     downloaded = await _download_full_size_generated_image(image_obj)
             if not downloaded:
-                downloaded = _download_media_item(item)
+                downloaded = _download_media_item(item, full_size=is_generated_image)
             # Üretilen görsellerde filigranı kaydetmeden önce kaldır (CPU işini ayrı iş parçacığında çalıştır).
             if downloaded and item.get("kind") == "image":
                 cleaned = await asyncio.to_thread(
