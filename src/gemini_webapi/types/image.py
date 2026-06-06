@@ -252,12 +252,16 @@ class GeneratedImage(Image):
                     )
 
             if "=s1024-rj" in self.url:
-                self.url = self.url.replace("=s1024-rj", "=s2048-rj")
-            elif "=s2048-rj" not in self.url:
-                self.url += "=s2048-rj"
+                self.url = self.url.replace("=s1024-rj", "=s0")
+            elif "=s2048-rj" in self.url:
+                self.url = self.url.replace("=s2048-rj", "=s0")
+            elif "=s0" not in self.url:
+                self.url += "=s0"
         else:
             if "=s2048-rj" in self.url:
                 self.url = self.url.replace("=s2048-rj", "=s1024-rj")
+            elif "=s0" in self.url:
+                self.url = self.url.replace("=s0", "=s1024-rj")
             elif "=s1024-rj" not in self.url:
                 self.url += "=s1024-rj"
 

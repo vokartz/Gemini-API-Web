@@ -49,13 +49,115 @@ def get_alpha_map(size):
     return _ALPHA_MAPS[size]
 
 
+def detect_watermark(img, verbose=False):
+    """
+    Detect the watermark size, position, and score using coarse-to-fine NCC template matching.
+    """
+    from numpy.lib.stride_tricks import sliding_window_view
+    
+    # Convert image to grayscale numpy array
+    img_gray = img.convert('L')
+    I = np.array(img_gray, dtype=np.float32) / 255.0
+    width, height = img.size
+    
+    scale = 4
+    W_s, H_s = width // scale, height // scale
+    if W_s < 24 or H_s < 24:
+        return None
+        
+    img_small = img_gray.resize((W_s, H_s), Image.Resampling.BILINEAR)
+    I_small = np.array(img_small, dtype=np.float32) / 255.0
+    
+    best_match = None
+    best_score = -1.0
+    
+    for size in [48, 96]:
+        try:
+            alpha_map = get_alpha_map(size)
+        except Exception as exc:
+            if verbose:
+                print(f"Failed to load alpha map for size {size}: {exc}")
+            continue
+            
+        # Downsample template
+        alpha_img = Image.fromarray((alpha_map * 255).astype(np.uint8))
+        size_s = size // scale
+        alpha_small_img = alpha_img.resize((size_s, size_s), Image.Resampling.BILINEAR)
+        T_small = np.array(alpha_small_img, dtype=np.float32) / 255.0
+        
+        h, w = T_small.shape
+        if H_s < h or W_s < w:
+            continue
+            
+        # Coarse template matching
+        T_mean = T_small.mean()
+        T_std = T_small.std()
+        if T_std < 1e-5:
+            T_std = 1.0
+        T_norm = (T_small - T_mean) / (T_std * h * w)
+        
+        windows = sliding_window_view(I_small, (h, w))
+        W_mean = windows.mean(axis=(2, 3), keepdims=True)
+        W_std = windows.std(axis=(2, 3), keepdims=True)
+        W_std = np.where(W_std < 1e-5, 1.0, W_std)
+        
+        W_norm = (windows - W_mean) / W_std
+        ncc = np.sum(W_norm * T_norm, axis=(2, 3))
+        
+        y_s, x_s = np.unravel_index(np.argmax(ncc), ncc.shape)
+        
+        # Scale back to original resolution and refine
+        y_c = y_s * scale
+        x_c = x_s * scale
+        
+        best_fine_score = -1.0
+        best_fine_pos = (0, 0)
+        
+        T_o_mean = alpha_map.mean()
+        T_o_std = alpha_map.std()
+        if T_o_std < 1e-5:
+            T_o_std = 1.0
+        T_o_norm = (alpha_map - T_o_mean) / (T_o_std * size * size)
+        
+        H_orig, W_orig = I.shape
+        
+        # Search window of ±8 pixels around coarse candidate
+        for dy in range(-8, 9):
+            for dx in range(-8, 9):
+                y = y_c + dy
+                x = x_c + dx
+                if 0 <= y <= H_orig - size and 0 <= x <= W_orig - size:
+                    patch = I[y : y + size, x : x + size]
+                    p_mean = patch.mean()
+                    p_std = patch.std()
+                    if p_std < 1e-5:
+                        p_std = 1.0
+                    p_norm = (patch - p_mean) / p_std
+                    score = np.sum(p_norm * T_o_norm)
+                    if score > best_fine_score:
+                        best_fine_score = score
+                        best_fine_pos = (y, x)
+                        
+        if verbose:
+            print(f"Size {size} best fine score: {best_fine_score} at {best_fine_pos}")
+            
+        if best_fine_score > best_score:
+            best_score = best_fine_score
+            best_match = {
+                "logo_size": size,
+                "y": best_fine_pos[0],
+                "x": best_fine_pos[1],
+                "score": best_fine_score
+            }
+            
+    if best_match and best_match["score"] >= 0.75:
+        return best_match
+    return None
+
+
 def detect_watermark_config(width, height):
     """
-    Detect watermark configuration based on image dimensions.
-
-    Gemini's watermark rules:
-    - If both width and height > 1024: 96x96 logo, 64px margin
-    - Otherwise: 48x48 logo, 32px margin
+    Legacy helper to detect watermark configuration based on image dimensions.
     """
     if width > 1024 and height > 1024:
         return {"logo_size": 96, "margin": 64}
@@ -65,19 +167,15 @@ def detect_watermark_config(width, height):
 
 def remove_watermark(image, verbose=False):
     """
-    Remove Gemini watermark from image using reverse alpha blending.
-
-    The algorithm reverses Gemini's watermark application:
-        watermarked = alpha * logo + (1 - alpha) * original
-    To recover:
-        original = (watermarked - alpha * logo) / (1 - alpha)
+    Remove Gemini watermark from image by auto-detecting its position and size
+    using template matching, then applying reverse alpha blending.
 
     Args:
         image: PIL Image, file path, or bytes
         verbose: Print debug information
 
     Returns:
-        PIL Image with watermark removed
+        PIL Image with watermark removed (or original image if not detected)
     """
     # Handle different input types
     if isinstance(image, (str, Path)):
@@ -89,26 +187,19 @@ def remove_watermark(image, verbose=False):
     else:
         raise ValueError(f"Unsupported image type: {type(image)}")
 
-    width, height = img.size
-    config = detect_watermark_config(width, height)
-    logo_size = config["logo_size"]
-    margin = config["margin"]
-
-    if verbose:
-        print(f"Image size: {width}x{height}")
-        print(f"Watermark config: {logo_size}x{logo_size}, margin={margin}px")
-
-    # Calculate watermark position (bottom-right corner)
-    x = width - margin - logo_size
-    y = height - margin - logo_size
-
-    if x < 0 or y < 0:
+    match = detect_watermark(img, verbose=verbose)
+    if not match:
         if verbose:
-            print("Image too small for watermark, returning unchanged")
+            print("Watermark not detected, returning image unchanged.")
         return img
 
+    logo_size = match["logo_size"]
+    y = match["y"]
+    x = match["x"]
+    score = match["score"]
+
     if verbose:
-        print(f"Watermark position: ({x}, {y})")
+        print(f"Detected watermark size: {logo_size}x{logo_size} at position ({x}, {y}) with score {score:.4f}")
 
     # Load alpha map
     alpha_map = get_alpha_map(logo_size)

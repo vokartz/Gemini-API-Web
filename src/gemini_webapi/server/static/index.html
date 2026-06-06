@@ -558,6 +558,17 @@
             <label>Gem
               <select id="nativeGem"><option value="">Gem Kullanma</option></select>
             </label>
+            <label>En-Boy Oranı (Aspect Ratio)
+              <select id="nativeAspectRatio">
+                <option value="">Varsayılan (Default)</option>
+                <option value="1:1">1:1 (Kare / Square)</option>
+                <option value="16:9">16:9 (Geniş Ekran / Landscape)</option>
+                <option value="9:16">9:16 (Dikey / Portrait)</option>
+                <option value="4:3">4:3 (Standart / Standard)</option>
+                <option value="3:4">3:4 (Dikey Standart / Portrait Standard)</option>
+                <option value="21:9">21:9 (Sinematik / Cinematic)</option>
+              </select>
+            </label>
             <label>İstem (Prompt)
               <textarea id="nativePrompt" placeholder="Metin, görsel/video/müzik üretim gereksinimlerini veya Gemini yerel sınıflandırılmış çıktı gerektiren görevleri girin"></textarea>
             </label>
@@ -657,6 +668,17 @@
                 </select>
               </label>
             </div>
+            <label>En-Boy Oranı (Aspect Ratio)
+              <select id="mediaAspectRatio">
+                <option value="">Varsayılan (Default)</option>
+                <option value="1:1">1:1 (Kare / Square)</option>
+                <option value="16:9">16:9 (Geniş Ekran / Landscape)</option>
+                <option value="9:16">9:16 (Dikey / Portrait)</option>
+                <option value="4:3">4:3 (Standart / Standard)</option>
+                <option value="3:4">3:4 (Dikey Standart / Portrait Standard)</option>
+                <option value="21:9">21:9 (Sinematik / Cinematic)</option>
+              </select>
+            </label>
             <label>Üretim Açıklaması
               <textarea id="mediaGeneratePrompt" placeholder="Üretmek istediğiniz görsel, video veya ses içeriğini açıklayın"></textarea>
             </label>
@@ -1303,6 +1325,10 @@ print(resp.choices[0].message.content)</code></pre>
       return { image: "Görsel", web_image: "Web Görseli", video: "Video", audio: "Ses", media: "Medya" }[kind] || kind || "Medya";
     }
     function playableMediaUrl(item) {
+      const kind = item.kind || item.type || "media";
+      if ((kind === "image" || kind === "web_image") && item.url) {
+        return item.url;
+      }
       return item.cached ? (item.content_url || item.url || item.thumbnail || "") : (item.content_url || "");
     }
     function mediaItemMarkup(item, index = 0) {
@@ -1378,8 +1404,13 @@ print(resp.choices[0].message.content)</code></pre>
       const gemId = gemSelect.value || null;
       // Gem id'leri hesaba özeldir; adı da gönderiyoruz ki sunucu çalışan hesabın kendi gem id'sine çözebilsin.
       const gemName = gemId ? (gemSelect.selectedOptions[0] && gemSelect.selectedOptions[0].text) || null : null;
+      let prompt = $("nativePrompt").value;
+      const ratio = $("nativeAspectRatio").value;
+      if (ratio) {
+        prompt = `IMPORTANT ${ratio}\n${prompt}`;
+      }
       return {
-        prompt: $("nativePrompt").value,
+        prompt: prompt,
         model: $("nativeModel").value,
         gem_id: gemId,
         gem_name: gemName,
@@ -1393,7 +1424,12 @@ print(resp.choices[0].message.content)</code></pre>
       const kind = $("mediaGenerateKind").value;
       const text = $("mediaGeneratePrompt").value.trim();
       const prefix = kind === "image" ? "Görsel üret: " : kind === "video" ? "Video üret: " : "Ses/Müzik üret: ";
-      return `${prefix}${text}`;
+      let finalPrompt = `${prefix}${text}`;
+      const ratio = $("mediaAspectRatio").value;
+      if (ratio) {
+        finalPrompt = `IMPORTANT ${ratio}\n${finalPrompt}`;
+      }
+      return finalPrompt;
     }
     async function mediaPayload() {
       return {

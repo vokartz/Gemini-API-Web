@@ -1653,20 +1653,23 @@ def create_app(config: ServerConfig | None = None):
 
     def _full_size_image_url(url: str) -> str:
         # Üretilen görsel URL'sini önizleme yerine tam boyuta yükseltir (kütüphane ile aynı mantık).
-        if "=s2048-rj" in url:
+        if "=s0" in url:
             return url
         if "=s1024-rj" in url:
-            return url.replace("=s1024-rj", "=s2048-rj")
-        return f"{url}=s2048-rj"
+            return url.replace("=s1024-rj", "=s0")
+        if "=s2048-rj" in url:
+            return url.replace("=s2048-rj", "=s0")
+        return f"{url}=s0"
 
     def _download_media_item(item: dict[str, Any], full_size: bool = False) -> dict[str, Any]:
         url = item.get("url") or ""
         if not url or not _media_host_allowed(url):
             return {}
         # Üretilen görsellerde RPC tabanlı tam-boyut yolu kullanılamadığında bile önizleme yerine
-        # en az 2048px'lik tam boyutu indir.
+        # çözünürlük sınırı olmadan tam boyutu indir.
         if full_size and item.get("kind") == "image":
             url = _full_size_image_url(url)
+            item["url"] = url
         try:
             account = store.get_account(rotator.status()["current_account_id"])
             cookies = account.cookies if account else None
@@ -1756,6 +1759,8 @@ def create_app(config: ServerConfig | None = None):
                 image_obj = image_objs.get(item.get("image_id"))
                 if image_obj is not None:
                     downloaded = await _download_full_size_generated_image(image_obj)
+                    if downloaded and image_obj.url:
+                        item["url"] = image_obj.url
             if not downloaded:
                 downloaded = _download_media_item(item, full_size=is_generated_image)
             # Üretilen görsellerde filigranı kaydetmeden önce kaldır (CPU işini ayrı iş parçacığında çalıştır).
