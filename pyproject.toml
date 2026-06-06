@@ -35,6 +35,8 @@ server = [
     "playwright>=1.45,<2",
     "python-multipart>=0.0.9,<1",
     "uvicorn[standard]>=0.27,<1",
+    "pillow>=10,<12",
+    "numpy>=1.26,<3",
 ]
 
 [project.scripts]
@@ -49,7 +51,7 @@ where = ["src"]
 include = ["gemini_webapi*"]
 
 [tool.setuptools.package-data]
-gemini_webapi = ["server/static/*"]
+gemini_webapi = ["server/static/*", "utils/remover/*.png"]
 
 [tool.setuptools_scm]
 version_scheme = "post-release"

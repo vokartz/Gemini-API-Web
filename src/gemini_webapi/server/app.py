@@ -1555,14 +1555,16 @@ def create_app(config: ServerConfig | None = None):
     async def _gem_arg(client: Any, request: GeminiGenerateRequest) -> str | None:
         if request.gem:
             return request.gem
-        if request.gem_id:
-            return request.gem_id
+        # Gem id'leri hesaba özeldir; aynı gem her hesapta farklı bir id'ye sahiptir. Bu yüzden
+        # önce ada göre, çalışan hesabın kendi gem id'sine çözümleriz; böylece rotator hangi hesaba
+        # geçerse geçsin doğru gem kullanılır. Ad bulunamazsa gem_id'ye geri düşeriz.
         if request.gem_name:
             gems = await client.fetch_gems()
             gem = gems.get(name=request.gem_name)
-            if gem is None:
-                raise ValueError(f"Gem not found: {request.gem_name}")
-            return gem.id
+            if gem is not None:
+                return gem.id
+        if request.gem_id:
+            return request.gem_id
         return None
 
     def _file_paths(file_ids: list[str]) -> list[str]:
@@ -1588,6 +1590,59 @@ def create_app(config: ServerConfig | None = None):
             "video": ".mp4",
             "audio": ".mp3",
         }.get(kind, ".bin")
+
+    def _generated_image_map(output: Any) -> dict[str, Any]:
+        # image_id -> GeneratedImage nesnesi. Sunucu, tam boyutlu (full-size) orijinal görseli
+        # çözmek için bu nesnelerin client_ref/cid/rid/rcid/image_id alanlarına ihtiyaç duyar.
+        result: dict[str, Any] = {}
+        candidate = output.candidates[output.chosen] if output.candidates else None
+        for image in getattr(candidate, "generated_images", []) or []:
+            image_id = getattr(image, "image_id", None)
+            if image_id:
+                result[image_id] = image
+        return result
+
+    async def _download_full_size_generated_image(image_obj: Any) -> dict[str, Any]:
+        # Üretilen görselin önizleme (düşük çözünürlük) yerine tam boyutlu orijinalini indirir.
+        # GeneratedImage.save() kütüphanenin RPC tabanlı tam-boyut çözümleme mantığını kullanır.
+        try:
+            tmp_dir = Path(config.database_path).resolve().parent / "media-cache" / "_tmp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            saved_path = await image_obj.save(
+                path=str(tmp_dir), full_size=True, verbose=False
+            )
+            file_path = Path(saved_path)
+            content = file_path.read_bytes()
+            content_type = (
+                mimetypes.guess_type(file_path.name)[0] or "image/png"
+            )
+            try:
+                file_path.unlink()
+            except OSError:
+                pass
+            if not content or len(content) > MEDIA_CONTENT_MAX_BYTES:
+                return {}
+            return {
+                "content": content,
+                "content_type": content_type,
+                "size": len(content),
+            }
+        except Exception:
+            return {}
+
+    def _strip_watermark_bytes(content: bytes) -> dict[str, Any]:
+        # Üretilen her görselin Gemini filigranı, kaydedilmeden önce kaldırılır. Filigran kaldırma
+        # ters alfa harmanlamayla görselin yerel (native) çözünürlüğünde çalışır; bu yüzden bu adım
+        # yalnızca tam-boyut indirme sonrası uygulanır. pillow/numpy yoksa sessizce atlanır.
+        try:
+            from ..utils.remover import remove_watermark_bytes
+        except Exception:
+            return {}
+        try:
+            cleaned = remove_watermark_bytes(content, output_format="PNG")
+            return {"content": cleaned, "content_type": "image/png", "size": len(cleaned)}
+        except Exception:
+            return {}
 
     def _download_media_item(item: dict[str, Any]) -> dict[str, Any]:
         url = item.get("url") or ""
@@ -1673,8 +1728,22 @@ def create_app(config: ServerConfig | None = None):
         store_media: bool = False,
     ) -> int:
         count = 0
+        image_objs = _generated_image_map(output)
         for item in _media_entries(output):
-            downloaded = _download_media_item(item)
+            downloaded: dict[str, Any] = {}
+            if item.get("kind") == "image":
+                image_obj = image_objs.get(item.get("image_id"))
+                if image_obj is not None:
+                    downloaded = await _download_full_size_generated_image(image_obj)
+            if not downloaded:
+                downloaded = _download_media_item(item)
+            # Üretilen görsellerde filigranı kaydetmeden önce kaldır (CPU işini ayrı iş parçacığında çalıştır).
+            if downloaded and item.get("kind") == "image":
+                cleaned = await asyncio.to_thread(
+                    _strip_watermark_bytes, downloaded["content"]
+                )
+                if cleaned:
+                    downloaded = {**downloaded, **cleaned}
             cache: dict[str, Any] = {}
             storage: dict[str, Any] = {}
             if store_media and downloaded:
@@ -1899,63 +1968,102 @@ def create_app(config: ServerConfig | None = None):
         store.replace_gems_cache(gem_list)
         return {"ok": True, "cached": False, "gems": gem_list}
 
+    async def _resolve_gem_name_on_current(gem_id: str) -> str | None:
+        # Gem id'si yalnızca onu listeleyen (mevcut) hesapta geçerlidir. Diğer hesaplarda aynı gem'i
+        # bulabilmek için kararlı anahtar olan adı, mevcut hesaptan çözeriz.
+        async def operation(client):
+            gems = await client.fetch_gems()
+            gem = gems.get(id=gem_id)
+            return gem.name if gem else None
+
+        try:
+            return await rotator.run(
+                operation,
+                count_usage=False,
+                count_failure=False,
+                endpoint="/v1/gemini/gems",
+                output_type="gem",
+            )
+        except Exception:
+            return None
+
     @app.post("/v1/gemini/gems")
     async def create_gem(request: GemRequest) -> dict[str, Any]:
-        async def operation(client):
+        # Gem'i tüm hesaplarda aynı adla oluştur; böylece rotator hangi hesaba geçerse geçsin gem mevcut olur.
+        async def operation(client, account):
             return await client.create_gem(
                 name=request.name,
                 prompt=request.prompt,
                 description=request.description,
             )
 
-        try:
-            gem = await rotator.run(
-                operation,
-                count_usage=False,
-                endpoint="/v1/gemini/gems",
-                output_type="gem",
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-        return {"ok": True, "gem": _gem_dict(gem)}
+        results = await rotator.run_on_each_account(operation)
+        created = [r for r in results if r["error"] is None and r["result"] is not None]
+        if not created:
+            errors = "; ".join(r["error"] for r in results if r["error"]) or "Aktif hesap yok."
+            raise HTTPException(status_code=502, detail=f"Gem hiçbir hesapta oluşturulamadı: {errors}")
+        return {
+            "ok": True,
+            "gem": _gem_dict(created[0]["result"]),
+            "accounts_total": len(results),
+            "accounts_succeeded": len(created),
+        }
 
     @app.patch("/v1/gemini/gems/{gem_id}")
     async def update_gem(gem_id: str, request: GemRequest) -> dict[str, Any]:
-        async def operation(client):
+        # Güncellenecek gem'i tüm hesaplarda eski adına göre bul ve yeni değerlerle güncelle (yeniden adlandırma dahil).
+        old_name = await _resolve_gem_name_on_current(gem_id)
+
+        async def operation(client, account):
+            target_id = gem_id
+            if old_name:
+                gems = await client.fetch_gems()
+                match = gems.get(name=old_name)
+                if match is None:
+                    return None
+                target_id = match.id
             return await client.update_gem(
-                gem=gem_id,
+                gem=target_id,
                 name=request.name,
                 prompt=request.prompt,
                 description=request.description,
             )
 
-        try:
-            gem = await rotator.run(
-                operation,
-                count_usage=False,
-                endpoint="/v1/gemini/gems",
-                output_type="gem",
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-        return {"ok": True, "gem": _gem_dict(gem)}
+        results = await rotator.run_on_each_account(operation)
+        updated = [r for r in results if r["error"] is None and r["result"] is not None]
+        if not updated:
+            errors = "; ".join(r["error"] for r in results if r["error"]) or "Eşleşen gem bulunamadı."
+            raise HTTPException(status_code=502, detail=f"Gem hiçbir hesapta güncellenemedi: {errors}")
+        return {
+            "ok": True,
+            "gem": _gem_dict(updated[0]["result"]),
+            "accounts_total": len(results),
+            "accounts_succeeded": len(updated),
+        }
 
     @app.delete("/v1/gemini/gems/{gem_id}")
     async def delete_gem(gem_id: str) -> dict[str, Any]:
-        async def operation(client):
-            await client.delete_gem(gem_id)
+        # Gem'i tüm hesaplardan adına göre sil.
+        old_name = await _resolve_gem_name_on_current(gem_id)
+
+        async def operation(client, account):
+            target_id = gem_id
+            if old_name:
+                gems = await client.fetch_gems()
+                match = gems.get(name=old_name)
+                if match is None:
+                    return None
+                target_id = match.id
+            await client.delete_gem(target_id)
             return True
 
-        try:
-            await rotator.run(
-                operation,
-                count_usage=False,
-                endpoint="/v1/gemini/gems",
-                output_type="gem",
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-        return {"ok": True}
+        results = await rotator.run_on_each_account(operation)
+        deleted = [r for r in results if r["error"] is None and r["result"]]
+        return {
+            "ok": True,
+            "accounts_total": len(results),
+            "accounts_succeeded": len(deleted),
+        }
 
     @app.post("/v1/gemini/deep-research/plan")
     async def create_deep_research_plan(

@@ -128,6 +128,32 @@ class AccountRotator:
     def request_logs(self, limit: int = 80) -> list[dict[str, Any]]:
         return [log.__dict__ for log in self.store.list_request_logs(limit=limit)]
 
+    async def run_on_each_account(
+        self,
+        operation: Callable[[GeminiClient, Account], Awaitable[T]],
+    ) -> list[dict[str, Any]]:
+        """Verilen işlemi tüm etkin hesaplar üzerinde tek tek çalıştırır (best-effort).
+
+        Gem'lerin tüm hesaplarda oluşturulması/güncellenmesi/silinmesi gibi, hesaba özel
+        kaynakların tüm havuzda eşitlenmesi gereken yönetim işlemleri için kullanılır.
+        Bir hesabın hatası diğerlerini durdurmaz; her hesap için sonuç/hata döndürülür.
+        Bu yol kullanım/başarısızlık sayacı işletmez ve hesapları doğrulamaz.
+        """
+        results: list[dict[str, Any]] = []
+        for account in self.store.get_active_accounts():
+            try:
+                async with self._lock:
+                    slot = await self._get_slot(account, record_status=False)
+                result = await operation(slot.client, account)
+                results.append(
+                    {"account_id": account.id, "result": result, "error": None}
+                )
+            except Exception as exc:
+                results.append(
+                    {"account_id": account.id, "result": None, "error": str(exc)}
+                )
+        return results
+
     async def switch_next(self) -> Account:
         async with self._lock:
             return await self._switch_to_next_locked()

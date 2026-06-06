@@ -1374,10 +1374,15 @@ print(resp.choices[0].message.content)</code></pre>
       URL.revokeObjectURL(url);
     }
     async function nativePayload() {
+      const gemSelect = $("nativeGem");
+      const gemId = gemSelect.value || null;
+      // Gem id'leri hesaba özeldir; adı da gönderiyoruz ki sunucu çalışan hesabın kendi gem id'sine çözebilsin.
+      const gemName = gemId ? (gemSelect.selectedOptions[0] && gemSelect.selectedOptions[0].text) || null : null;
       return {
         prompt: $("nativePrompt").value,
         model: $("nativeModel").value,
-        gem_id: $("nativeGem").value || null,
+        gem_id: gemId,
+        gem_name: gemName,
         temporary: $("nativeTemporary").checked,
         deep_research: $("nativeDeepResearch").checked,
         store_media: true,
