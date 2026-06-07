@@ -426,18 +426,16 @@ curl http://localhost:7860/v1/gemini/stream \
 - `GET /v1/gemini/media/{media_token}/content`
 - `GET /v1/gemini/jobs`
 
-## 管理端页面
+## Yönetim Paneli (Web Arayüzü)
 
-访问 `http://localhost:7860` 后可以使用以下页面：
+`http://localhost:7860` adresinde koyu temalı, çok sayfalı bir panel sunulur:
 
-- `请求看板`：查看账号、请求数、失败率、模型使用情况、媒体冷却概览和请求日志。
-- `原生生成`：测试 Gemini 原生输出，支持文本、分类输出、附件和 Gems。
-- `Gems`：查看、创建、更新、删除自定义 system prompt。
-- `Deep Research`：创建研究计划、启动、轮询状态和查看结果。
-- `媒体结果`：上方生成图片/视频/音频，下方查看媒体历史和缓存/代理链接。
-- `账户设置`：调整轮换策略、授权操作、导入/导出/验证/切换账号，并可手动解除账号媒体冷却。
+- `/` (Görsel Üretimi): `/v1/generate` SSE akışıyla filigransız görsel üretir. Prompt, model, en-boy oranı (1:1 / 16:9 / 9:16), çıktı formatı (PNG/JPG) ve gem seçilebilir. Sonuç anlık akışla gelir.
+- `/accounts.html` (Hesaplar & Kota): Manuel cookie ile hesap ekleme, her hesap için kota kullanımı (usage_count / switch_on_uses), hata sayısı, medya soğuma durumu, doğrulama, etkinleştir/devre dışı, hesap değiştir ve silme.
+- `/gems.html` (Gems): Özel system prompt'ları oluştur/düzenle/sil; varsayılan gem işaretle. Tüm hesaplara otomatik senkronlanır.
+- `/api.html` (API): `/v1/generate` kullanım örneği, API anahtarı oluşturma/iptal ve CDN (object storage) ayarları.
 
-请求日志会记录输出类型、任务/请求 id、媒体数量和错误信息；媒体生成完成后会回填实际 `media_count`，方便在看板里判断图片、视频或音频是否真正产出。早期没有 `job_id/request_id` 的历史日志无法可靠关联媒体结果，会保留原始计数。
+Ortak başlık, altbilgi ve stil `static/app.css` + `static/app.js` üzerinden paylaşılır.
 
 ## 管理接口
 

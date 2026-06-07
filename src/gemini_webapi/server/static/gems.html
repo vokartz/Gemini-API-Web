@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gems · Gemini Panel</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main>
+    <div class="page-title">
+      <h1>Gems</h1>
+      <p>Özel sistem istemleri (system prompt). Burada tanımlananlar tüm hesaplara otomatik senkronlanır ve üretimde seçilebilir.</p>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head"><h2 id="formTitle">Yeni Gem</h2></div>
+        <div class="panel-body stack">
+          <input id="gemId" type="hidden">
+          <label>İsim<input id="gemName" placeholder="örn: Fotogerçekçi Stil"></label>
+          <label>Açıklama (isteğe bağlı)<input id="gemDescription" placeholder="Kısa açıklama"></label>
+          <label>System Prompt<textarea id="gemPrompt" placeholder="Gem için sistem talimatı…"></textarea></label>
+          <label class="inline"><input id="gemIsDefault" type="checkbox"> Varsayılan yap (gem seçilmezse otomatik uygulanır)</label>
+          <div class="row">
+            <button id="saveGemBtn" class="primary">Kaydet</button>
+            <button id="newGemBtn" class="ghost">Yeni / Temizle</button>
+            <button id="deleteGemBtn" class="danger" style="display:none">Sil</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Gem Listesi</h2>
+          <button id="refreshBtn" class="small">Yenile</button>
+        </div>
+        <div class="panel-body">
+          <div id="gemList" class="list"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    let gems = [];
+
+    async function init() {
+      $("saveGemBtn").onclick = onSave;
+      $("newGemBtn").onclick = resetForm;
+      $("deleteGemBtn").onclick = onDelete;
+      $("refreshBtn").onclick = () => refresh().catch((e) => toast(e.message, true));
+      $("gemList").addEventListener("click", onListClick);
+      await refresh();
+    }
+
+    async function refresh() {
+      gems = await loadGems();
+      renderGems();
+    }
+
+    function renderGems() {
+      if (!gems.length) {
+        $("gemList").innerHTML = `<div class="preview-empty">Henüz özel gem yok.</div>`;
+        return;
+      }
+      $("gemList").innerHTML = gems.map((g) => `
+        <div class="item">
+          <div class="row">
+            <b>${esc(g.name)}</b>
+            ${g.is_default ? `<span class="pill accent">Varsayılan ⭐</span>` : `<span class="pill">Özel</span>`}
+          </div>
+          ${g.description ? `<div class="hint">${esc(g.description)}</div>` : ""}
+          <div class="hint faint" style="white-space:pre-wrap">${esc((g.prompt || "").slice(0, 220))}${(g.prompt || "").length > 220 ? "…" : ""}</div>
+          <div class="row"><button class="small" data-edit="${esc(g.id)}">Düzenle</button></div>
+        </div>
+      `).join("");
+    }
+
+    function resetForm() {
+      $("gemId").value = "";
+      $("gemName").value = $("gemDescription").value = $("gemPrompt").value = "";
+      $("gemIsDefault").checked = false;
+      $("formTitle").textContent = "Yeni Gem";
+      $("deleteGemBtn").style.display = "none";
+    }
+
+    function fillForm(g) {
+      $("gemId").value = g.id;
+      $("gemName").value = g.name || "";
+      $("gemDescription").value = g.description || "";
+      $("gemPrompt").value = g.prompt || "";
+      $("gemIsDefault").checked = Boolean(g.is_default);
+      $("formTitle").textContent = `Düzenle: ${g.name}`;
+      $("deleteGemBtn").style.display = "";
+    }
+
+    function payload() {
+      return {
+        name: $("gemName").value.trim(),
+        description: $("gemDescription").value.trim(),
+        prompt: $("gemPrompt").value,
+        is_default: $("gemIsDefault").checked,
+      };
+    }
+
+    async function onSave() {
+      const data = payload();
+      if (!data.name) return toast("İsim zorunlu", true);
+      if (!data.prompt.trim()) return toast("Prompt zorunlu", true);
+      const id = $("gemId").value;
+      try {
+        if (id) await api(`/v1/custom-gems/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(data) });
+        else await api("/v1/custom-gems", { method: "POST", body: JSON.stringify(data) });
+        toast("Kaydedildi · hesaplara senkronlandı");
+        resetForm();
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function onDelete() {
+      const id = $("gemId").value;
+      if (!id || !confirm("Bu gem silinsin mi? (tüm hesaplardan da kaldırılır)")) return;
+      try {
+        await api(`/v1/custom-gems/${encodeURIComponent(id)}`, { method: "DELETE" });
+        toast("Silindi");
+        resetForm();
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    function onListClick(event) {
+      const btn = event.target.closest("[data-edit]");
+      if (!btn) return;
+      const g = gems.find((x) => x.id === btn.dataset.edit);
+      if (g) fillForm(g);
+    }
+
+    bootstrap(init);
+  </script>
+</body>
+</html>

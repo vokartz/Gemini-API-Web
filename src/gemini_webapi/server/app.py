@@ -56,6 +56,7 @@ MEDIA_CONTENT_ALLOWED_HOST_SUFFIXES = (
 )
 SYSTEM_SETTINGS_KEY = "system_settings"
 MASKED_SECRET = "********"
+PAGE_ROUTES = {"/", "/accounts.html", "/gems.html", "/api.html"}
 DEFAULT_SYSTEM_SETTINGS = {
     "api_keys": [],
     "object_storage": {
@@ -698,6 +699,7 @@ def create_app(config: ServerConfig | None = None):
         }
         if config.admin_password and not (
             path == "/"
+            or path in PAGE_ROUTES
             or path.startswith("/static/")
             or path in admin_public_paths
         ):
@@ -839,9 +841,24 @@ def create_app(config: ServerConfig | None = None):
     async def novnc_proxy(path: str, request: Request) -> Response:
         return await _proxy_novnc(path, request)
 
+    def _page(filename: str) -> FileResponse:
+        return FileResponse(static_dir / filename)
+
     @app.get("/")
     async def console() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+        return _page("index.html")
+
+    @app.get("/accounts.html")
+    async def page_accounts() -> FileResponse:
+        return _page("accounts.html")
+
+    @app.get("/gems.html")
+    async def page_gems() -> FileResponse:
+        return _page("gems.html")
+
+    @app.get("/api.html")
+    async def page_api() -> FileResponse:
+        return _page("api.html")
 
     @app.get("/health")
     async def health() -> dict[str, Any]:

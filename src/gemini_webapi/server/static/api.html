@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API · Gemini Panel</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main>
+    <div class="page-title">
+      <h1>API</h1>
+      <p>Kendi <code>/v1/generate</code> uç noktası, API anahtarları ve CDN (object storage) ayarları.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Kullanım</h2></div>
+      <div class="panel-body stack">
+        <div class="notice">Görsel üretimi <code>/v1/generate</code> üzerinden SSE akışı ile yapılır. OpenAI uyumlu uç noktalar kaldırılmıştır.</div>
+        <label>Temel URL<input id="baseUrl" readonly></label>
+        <pre id="curlSample"></pre>
+        <pre>event: status
+data: {"stage":"generating","request_id":"gen-..."}
+
+event: result
+data: {"stage":"done","images":[{"png_url":"...","jpg_url":"...","url":"..."}]}</pre>
+        <div class="hint">Alanlar: <code>mode</code> (image/video/audio) · <code>aspect_ratio</code> (1:1 / 16:9 / 9:16) · <code>output_format</code> (png/jpg) · <code>gem_id</code> (boşsa varsayılan gem) · <code>store_media</code>.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>API Anahtarları</h2>
+        <button id="newKeyBtn" class="small primary">Yeni Anahtar</button>
+      </div>
+      <div class="panel-body stack">
+        <div id="newKeyBox" style="display:none"></div>
+        <div id="keyList" class="list"></div>
+        <div class="hint">Anahtarlar harici çağrılarda <code>Authorization: Bearer &lt;key&gt;</code> olarak kullanılır. Oluşturulan anahtar bu tarayıcıya otomatik kaydedilir.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>CDN / Object Storage</h2>
+        <button id="saveStorageBtn" class="small primary">Kaydet</button>
+      </div>
+      <div class="panel-body stack">
+        <div id="storageStatus" class="notice">Durum yükleniyor…</div>
+        <label class="inline"><input id="stEnabled" type="checkbox"> Object storage'ı etkinleştir (üretilen görseller CDN'e yüklenir)</label>
+        <div class="split">
+          <label>Endpoint<input id="stEndpoint" placeholder="https://...r2.cloudflarestorage.com"></label>
+          <label>Bölge (region)<input id="stRegion" placeholder="auto"></label>
+        </div>
+        <div class="split">
+          <label>Bucket<input id="stBucket" placeholder="bucket-adi"></label>
+          <label>Prefix<input id="stPrefix" placeholder="gemini-web"></label>
+        </div>
+        <div class="split">
+          <label>Access Key ID<input id="stAccessKey" placeholder="..."></label>
+          <label>Secret Access Key<input id="stSecretKey" type="password" placeholder="(değiştirmek için yazın)"></label>
+        </div>
+        <label>Public URL (CDN tabanı)<input id="stPublicUrl" placeholder="https://cdn.example.com"></label>
+        <label class="inline"><input id="stPathStyle" type="checkbox"> Path-style erişim (R2/MinIO için açık)</label>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    async function init() {
+      $("baseUrl").value = window.location.origin;
+      $("curlSample").textContent =
+`curl -N ${window.location.origin}/v1/generate \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "gemini",
+    "mode": "image",
+    "prompt": "Gün batımında dağ manzarası",
+    "aspect_ratio": "16:9",
+    "output_format": "png",
+    "gem_id": null,
+    "store_media": true
+  }'`;
+      $("newKeyBtn").onclick = onNewKey;
+      $("saveStorageBtn").onclick = onSaveStorage;
+      $("keyList").addEventListener("click", onKeyListClick);
+      await refresh();
+    }
+
+    async function refresh() {
+      const data = await api("/v1/system-settings");
+      renderKeys(data.settings.api_keys || []);
+      renderStorage(data.settings.object_storage || {}, data.object_storage_ready);
+    }
+
+    function renderKeys(keys) {
+      $("keyList").innerHTML = keys.length ? keys.map((k) => `
+        <div class="item">
+          <div class="row">
+            <code>${esc(k.masked || "-")}</code>
+            <button class="small danger" data-fp="${esc(k.fingerprint)}">İptal</button>
+          </div>
+        </div>
+      `).join("") : `<div class="hint">Henüz API anahtarı yok.</div>`;
+    }
+
+    function renderStorage(s, ready) {
+      $("storageStatus").className = `notice ${ready ? "" : "warn"}`;
+      $("storageStatus").textContent = ready
+        ? "Object storage yapılandırması hazır. Üretilen görseller CDN'e yüklenecek."
+        : "Object storage yapılandırılmadı. Görseller yerel önbelleğe kaydedilecek.";
+      $("stEnabled").checked = Boolean(s.enabled);
+      $("stEndpoint").value = s.endpoint || "";
+      $("stRegion").value = s.region || "auto";
+      $("stBucket").value = s.bucket || "";
+      $("stPrefix").value = s.prefix || "gemini-web";
+      $("stAccessKey").value = s.access_key_id || "";
+      $("stSecretKey").value = "";
+      $("stPublicUrl").value = s.public_url || "";
+      $("stPathStyle").checked = s.force_path_style !== false;
+    }
+
+    async function onNewKey() {
+      try {
+        const data = await api("/v1/system-settings/api-keys", { method: "POST", body: "{}" });
+        localStorage.setItem("gemini-api-key", data.api_key);
+        $("newKeyBox").style.display = "";
+        $("newKeyBox").className = "notice";
+        $("newKeyBox").innerHTML = `Yeni anahtar (yalnızca şimdi gösterilir): <code>${esc(data.api_key)}</code>`;
+        toast("Anahtar oluşturuldu ve kaydedildi");
+        renderKeys(data.settings.api_keys || []);
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function onKeyListClick(event) {
+      const btn = event.target.closest("[data-fp]");
+      if (!btn || !confirm("Bu anahtar iptal edilsin mi?")) return;
+      try {
+        const data = await api(`/v1/system-settings/api-keys/${encodeURIComponent(btn.dataset.fp)}`, { method: "DELETE" });
+        renderKeys(data.settings.api_keys || []);
+        toast(data.deleted ? "İptal edildi" : "Bulunamadı");
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function onSaveStorage() {
+      const storage = {
+        enabled: $("stEnabled").checked,
+        endpoint: $("stEndpoint").value.trim(),
+        region: $("stRegion").value.trim() || "auto",
+        bucket: $("stBucket").value.trim(),
+        access_key_id: $("stAccessKey").value.trim(),
+        prefix: $("stPrefix").value.trim() || "gemini-web",
+        public_url: $("stPublicUrl").value.trim(),
+        force_path_style: $("stPathStyle").checked,
+      };
+      // Boş bırakılırsa maskeli değeri gönder; backend mevcut secret'ı korur, silmez.
+      storage.secret_access_key = $("stSecretKey").value || "********";
+      try {
+        await api("/v1/system-settings", { method: "PATCH", body: JSON.stringify({ object_storage: storage }) });
+        toast("CDN ayarları kaydedildi");
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    bootstrap(init);
+  </script>
+</body>
+</html>

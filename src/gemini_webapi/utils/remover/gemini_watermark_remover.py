@@ -37,10 +37,10 @@ ASSETS_DIR = Path(__file__).parent
 CANDIDATE_SIZES = (32, 48, 64, 96, 128)
 SHIPPED_SIZES = (48, 96)
 
-# Minimum NCC score required to accept a match. Lowered from the original 0.75
-# because legitimate watermarks over busy/dark backgrounds frequently scored
-# between 0.55 and 0.75 and were being missed.
-SCORE_THRESHOLD = float(os.getenv("WATERMARK_SCORE_THRESHOLD", "0.55"))
+# Minimum NCC score required to accept a match. Slightly below the original 0.75
+# so real watermarks over busy/dark backgrounds aren't missed, but not so low
+# that random bright corners are matched and then darkened by reverse blending.
+SCORE_THRESHOLD = float(os.getenv("WATERMARK_SCORE_THRESHOLD", "0.68"))
 
 
 def load_alpha_map(size):
@@ -223,7 +223,7 @@ def detect_watermark_config(width, height):
         return {"logo_size": 48, "margin": 32}
 
 
-def remove_watermark(image, verbose=False, allow_fallback=True):
+def remove_watermark(image, verbose=False, allow_fallback=False):
     """
     Remove Gemini watermark from image by auto-detecting its position and size
     using template matching, then applying reverse alpha blending.

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hesaplar & Kota · Gemini Panel</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main>
+    <div class="page-title">
+      <h1>Hesaplar & Kota</h1>
+      <p>Çok hesaplı cookie havuzu, kullanım kotası, doğrulama ve medya soğuma durumu.</p>
+    </div>
+
+    <div class="grid-3">
+      <div class="metric"><span class="value" id="mActive">-</span><span class="label">Aktif hesap</span></div>
+      <div class="metric"><span class="value" id="mCurrent">-</span><span class="label">Mevcut hesap #</span></div>
+      <div class="metric"><span class="value" id="mRequests">-</span><span class="label">Toplam istek (kayıt)</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Rotasyon Ayarları</h2>
+        <button id="saveSettingsBtn" class="small primary">Kaydet</button>
+      </div>
+      <div class="panel-body split">
+        <label>Kaç çağrıda hesap değiştir (kota eşiği)
+          <input id="switchOnUses" type="number" min="0">
+        </label>
+        <label>Kaç hatada hesap değiştir
+          <input id="failureThreshold" type="number" min="0">
+        </label>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Hesap Ekle (manuel cookie)</h2>
+      </div>
+      <div class="panel-body stack">
+        <div class="notice">Tarayıcınızdan <code>__Secure-1PSID</code> ve <code>__Secure-1PSIDTS</code> çerezlerini kopyalayıp aşağıya yapıştırın. İsim isteğe bağlıdır.</div>
+        <label>İsim (isteğe bağlı)<input id="accName" placeholder="örn: hesap-1"></label>
+        <label>__Secure-1PSID<input id="accPsid" placeholder="g.a000..."></label>
+        <label>__Secure-1PSIDTS<input id="accPsidts" placeholder="sidts-..."></label>
+        <button id="addAccountBtn" class="primary">Hesabı Ekle ve Doğrula</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Hesap Havuzu</h2>
+        <div class="row">
+          <button id="validateAllBtn" class="small">Tümünü Doğrula</button>
+          <button id="refreshBtn" class="small">Yenile</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div id="accountList" class="list"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    let switchOnUses = 40;
+
+    async function init() {
+      $("addAccountBtn").onclick = onAddAccount;
+      $("refreshBtn").onclick = () => refresh().catch((e) => toast(e.message, true));
+      $("validateAllBtn").onclick = onValidateAll;
+      $("saveSettingsBtn").onclick = onSaveSettings;
+      $("accountList").addEventListener("click", onListClick);
+      await refresh();
+    }
+
+    async function refresh() {
+      const status = await api("/v1/status");
+      switchOnUses = Number(status.switch_on_uses || 0);
+      $("switchOnUses").value = status.switch_on_uses;
+      $("failureThreshold").value = status.failure_threshold;
+      $("mCurrent").textContent = status.current_account_id ?? "-";
+      $("mRequests").textContent = status.request_log_count ?? "-";
+      const accounts = status.accounts || [];
+      $("mActive").textContent = accounts.filter((a) => a.enabled && !a.expired).length;
+      renderAccounts(accounts);
+    }
+
+    function quotaCell(a) {
+      const limit = switchOnUses > 0 ? switchOnUses : 0;
+      const used = Number(a.usage_count || 0);
+      const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+      const tone = !limit ? "" : pct >= 90 ? "bad" : pct >= 70 ? "warn" : "";
+      const label = limit ? `${used} / ${limit} çağrı (sonra rotasyon)` : `${used} çağrı (limit yok)`;
+      return `
+        <div class="stack" style="gap:5px">
+          <div class="row" style="justify-content:space-between">
+            <span class="hint">Kota kullanımı</span><span class="hint">${esc(label)}</span>
+          </div>
+          <div class="quota-bar ${tone}"><span style="width:${limit ? pct : 0}%"></span></div>
+        </div>`;
+    }
+
+    function cooldownText(a) {
+      const labels = { image: "Görsel", video: "Video", audio: "Ses" };
+      const entries = Object.entries(a.media_cooldowns || {});
+      if (!entries.length) return `<span class="pill ok">Medya hazır</span>`;
+      return entries.map(([kind, cd]) =>
+        `<span class="pill warn" title="${esc(cd.reason || "")}">${esc(labels[kind] || kind)}: ${esc(fmtDuration(cd.remaining_seconds))}</span>`
+      ).join(" ");
+    }
+
+    function renderAccounts(accounts) {
+      if (!accounts.length) {
+        $("accountList").innerHTML = `<div class="preview-empty">Henüz hesap yok. Yukarıdan cookie ile ekleyin.</div>`;
+        return;
+      }
+      $("accountList").innerHTML = accounts.map((a) => {
+        const statusPill = a.expired
+          ? `<span class="pill bad">Süresi doldu</span>`
+          : a.enabled ? `<span class="pill ok">Aktif</span>` : `<span class="pill">Devre dışı</span>`;
+        const currentPill = a.current ? `<span class="pill accent">Şu an kullanımda</span>` : "";
+        return `
+          <div class="item">
+            <div class="row">
+              <div class="row" style="gap:8px">
+                <b>#${a.id} ${esc(a.name || "İsimsiz")}</b>${statusPill}${currentPill}
+              </div>
+              <div class="row">${cooldownText(a)}</div>
+            </div>
+            ${quotaCell(a)}
+            <div class="hint">${a.usage_count} çağrı · ${a.failure_count} hata${a.last_used_at ? ` · son: ${esc(fmt(a.last_used_at))}` : ""}${a.validation_status ? ` · doğrulama: ${esc(a.validation_status)}` : ""}</div>
+            ${a.validation_message ? `<div class="hint faint">${esc(a.validation_message)}</div>` : ""}
+            <div class="row">
+              <button class="small" data-act="switch" data-id="${a.id}" ${a.current || !a.enabled || a.expired ? "disabled" : ""}>Bu hesaba geç</button>
+              <button class="small" data-act="validate" data-id="${a.id}">Doğrula</button>
+              <button class="small" data-act="toggle" data-id="${a.id}" data-enabled="${a.enabled}">${a.enabled ? "Devre dışı" : "Etkinleştir"}</button>
+              ${Object.keys(a.media_cooldowns || {}).length ? `<button class="small" data-act="clear-cd" data-id="${a.id}">Soğumayı temizle</button>` : ""}
+              <button class="small danger" data-act="delete" data-id="${a.id}">Sil</button>
+            </div>
+          </div>`;
+      }).join("");
+    }
+
+    async function onAddAccount(event) {
+      const btn = event.currentTarget;
+      const psid = $("accPsid").value.trim();
+      if (!psid) return toast("__Secure-1PSID zorunlu", true);
+      btn.disabled = true;
+      try {
+        await api("/v1/accounts", {
+          method: "POST",
+          body: JSON.stringify({
+            name: $("accName").value.trim() || null,
+            "__Secure-1PSID": psid,
+            "__Secure-1PSIDTS": $("accPsidts").value.trim() || null,
+            enabled: true,
+          }),
+        });
+        $("accName").value = $("accPsid").value = $("accPsidts").value = "";
+        toast("Hesap eklendi");
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+      finally { btn.disabled = false; }
+    }
+
+    async function onValidateAll() {
+      try { await api("/v1/accounts/validate-all", { method: "POST" }); toast("Doğrulama tamam"); await refresh(); }
+      catch (e) { toast(e.message, true); }
+    }
+
+    async function onSaveSettings() {
+      try {
+        await api("/v1/settings", {
+          method: "PATCH",
+          body: JSON.stringify({
+            switch_on_uses: Number($("switchOnUses").value),
+            failure_threshold: Number($("failureThreshold").value),
+          }),
+        });
+        toast("Ayarlar kaydedildi");
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function onListClick(event) {
+      const btn = event.target.closest("[data-act]");
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const act = btn.dataset.act;
+      try {
+        if (act === "switch") await api("/v1/accounts/switch", { method: "POST", body: JSON.stringify({ account_id: Number(id) }) });
+        else if (act === "validate") await api(`/v1/accounts/${id}/validate`, { method: "POST" });
+        else if (act === "toggle") await api(`/v1/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: btn.dataset.enabled !== "true" }) });
+        else if (act === "clear-cd") await api(`/v1/accounts/${id}/media-cooldowns/clear`, { method: "POST", body: JSON.stringify({ kind: null }) });
+        else if (act === "delete") {
+          if (!confirm(`#${id} hesabı silinsin mi?`)) return;
+          await api(`/v1/accounts/${id}`, { method: "DELETE" });
+        }
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    bootstrap(init);
+  </script>
+</body>
+</html>
