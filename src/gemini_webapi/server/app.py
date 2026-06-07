@@ -2121,9 +2121,10 @@ def create_app(config: ServerConfig | None = None):
         if output_format == "jpeg":
             formats = [("jpeg", "JPEG"), ("png", "PNG")]
 
-        for item in _media_entries(output):
+        for image_index, item in enumerate(_media_entries(output)):
             if item.get("kind") != "image":
                 continue
+            variant_key = f"{request_id}#{image_index}"
             source: dict[str, Any] = {}
             image_obj = image_objs.get(item.get("image_id"))
             if image_obj is not None:
@@ -2156,6 +2157,8 @@ def create_app(config: ServerConfig | None = None):
                     **variant_item,
                     "original_url": item.get("url", ""),
                     "image_format": key,
+                    # PNG ve JPG aynı kaynağa ait; geçmişte tek görsel olarak gruplanır.
+                    "variant_key": variant_key,
                 }
                 if storage:
                     metadata["object_storage"] = storage

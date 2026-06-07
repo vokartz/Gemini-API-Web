@@ -1,20 +1,55 @@
 # Gemini API Web
 
-基于 `gemini_webapi` 的 Docker 化 Gemini Web API 服务，提供 OpenAI 兼容接口、Gemini 原生能力接口、多账号 Cookie 池、自动轮换、网页登录授权和网页管理端。
+基于 `gemini_webapi` 的 Docker 化 Gemini Web görsel üretim servisi: kendi `/v1/generate` (SSE) görsel üretim arayüzü, çok hesaplı Cookie havuzu, otomatik rotasyon ve sidebar tabanlı koyu yönetim paneli.
 
-本项目适合长期运行在服务器或 NAS 上，用多个 Gemini 账号 Cookie 分担请求，并通过管理端查看调用情况、调整轮换策略、管理 Gems 和 Deep Research 任务。
+本项目适合长期运行在服务器或 NAS 上，用多个 Gemini 账号 Cookie 分担请求，并通过管理端管理 Gems、查看账号配额（kota）和生成图片。
+
+> Not: OpenAI uyumlu uç noktalar (`/v1/chat/completions`, `/v1/responses`, `/v1/images/generations`, `/v1/models`, `/v1/files`) kaldırılmıştır. Görsel üretimi için kendi `/v1/generate` SSE uç noktası kullanılır.
+
+## Yönetim Paneli (çoklu sayfa, sidebar)
+
+Koyu temalı, sidebar navigasyonlu panel. Sayfalar:
+
+- `/` — **Görsel Üretimi**: prompt, gem, en-boy oranı (1:1 / 16:9 / 9:16), çıktı formatı (PNG + JPG), referans görsel yükleme (düzenleme), canlı üretim süresi ve büyütme (zoom).
+- `/accounts.html` — **Hesaplar & Kota**: hesap havuzu, kullanım kotası çubukları, medya soğuma durumu, ekle/sil/doğrula/geçiş, rotasyon ayarları, içe/dışa aktarma.
+- `/gems.html` — **Gems**: özel gem veritabanı (oluştur/düzenle/sil, varsayılan işaretle); her gem tüm hesaplara otomatik senkronlanır.
+- `/api.html` — **API & Ayarlar**: API anahtarı yönetimi, nesne depolama (CDN) ayarları ve `/v1/generate` kullanım örneği.
+
+## Görsel Üretimi API'si
+
+```sh
+curl -N http://localhost:7860/v1/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Gün batımında bir dağ manzarası",
+    "model": "gemini",
+    "mode": "image",
+    "aspect_ratio": "16:9",
+    "output_format": "png",
+    "gem_id": null,
+    "store_media": true
+  }'
+```
+
+Yanıt `text/event-stream` (SSE): `event: status` → `event: result` (images: png_url/jpg_url). Alanlar:
+
+- `aspect_ratio`: `1:1`, `16:9` veya `9:16`.
+- `output_format`: `png` veya `jpg`; ikisi de filigransız üretilip CDN'e yüklenir.
+- `gem_id`: özel gem id'si; boşsa varsayılan gem otomatik uygulanır.
+- `file_ids`: düzenleme için referans görsel id'leri (`POST /v1/gemini/files`).
+
+Filigran, yalnızca yüksek güvenli şablon eşleşmesinde ters alfa harmanlamayla kaldırılır; yanlış pozitiflerde görsel değiştirilmez.
 
 ## 功能
 
 - Docker 一键部署，数据持久化到 SQLite。
-- 多账号 Cookie 池，支持导入、手动添加、网页登录授权保存。
-- 支持按调用次数轮换、按错误次数轮换、手动切换账号。
-- OpenAI 兼容接口：`/v1/chat/completions`、`/v1/models`。
-- Gemini 原生接口：生成、流式生成、Gems、Deep Research、文件上传、媒体结果索引。
-- 管理端控制台：请求看板、账户设置、授权登录、Gems、Deep Research、媒体生成和媒体结果。
+- 多账号 Cookie 池，支持导入、手动添加 Cookie。
+- 支持按调用次数轮换（kota eşiği）、按错误次数轮换、手动切换账号。
+- 自有 `/v1/generate` 图片生成接口（SSE 流式、aspect ratio、PNG+JPG、参考图编辑、CDN 上传）。
+- 自定义 Gems 数据库：创建/更新/删除，标记默认，自动同步到所有账号。
+- 管理端控制台（侧边栏 + 深色）：图片生成、账号与配额、Gems、API 与系统设置。
 - 服务器部署可开启管理员登录，保护网页控制台和管理接口；外部调用继续使用 API Key。
-- 媒体生成支持 `image`、`video`、`audio` 模式；生成结果会保存索引，并尽量缓存到本地，避免 Gemini 原始链接过期后无法查看。
-- 自用保护：图片/视频/音频生成会记录尝试和冷却状态，媒体额度错误或上游 2xx 但没有产出媒体时默认冷却 5 小时，避免额度异常时反复请求。
+- 自用保护：图片生成会记录尝试和冷却状态，媒体额度错误或上游 2xx 但没有产出媒体时默认冷却 5 小时。
 
 ## 快速开始
 

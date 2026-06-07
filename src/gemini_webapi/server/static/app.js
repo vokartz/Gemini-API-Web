@@ -58,36 +58,49 @@ function toast(message, bad = false) {
   toastTimer = setTimeout(() => { el.className = "toast"; }, 3200);
 }
 
-// ---------- Layout (header + footer + login) ----------
+// ---------- Layout (sidebar + login) ----------
+const ICONS = {
+  generate: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>',
+  accounts: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  gems: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 13L2 9z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg>',
+  api: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+};
 const NAV = [
-  { href: "/", label: "Görsel Üretimi" },
-  { href: "/accounts.html", label: "Hesaplar & Kota" },
-  { href: "/gems.html", label: "Gems" },
-  { href: "/api.html", label: "API" },
+  { href: "/", label: "Görsel Üretimi", icon: "generate" },
+  { href: "/accounts.html", label: "Hesaplar & Kota", icon: "accounts" },
+  { href: "/gems.html", label: "Gems", icon: "gems" },
+  { href: "/api.html", label: "API & Ayarlar", icon: "api" },
 ];
 
 function renderLayout() {
   const path = window.location.pathname;
   const navHtml = NAV.map((n) => {
-    const active = n.href === path || (n.href === "/" && path === "/index.html");
-    return `<a href="${n.href}" class="${active ? "active" : ""}">${esc(n.label)}</a>`;
+    const active = n.href === path || (n.href === "/" && (path === "/index.html" || path === "/"));
+    return `<a href="${n.href}" class="${active ? "active" : ""}">${ICONS[n.icon]}<span class="label">${esc(n.label)}</span></a>`;
   }).join("");
 
-  const header = document.createElement("header");
-  header.className = "site-header";
-  header.innerHTML = `
-    <div class="brand"><span class="logo">G</span> Gemini Panel</div>
-    <nav class="site-nav">${navHtml}</nav>
-    <div class="header-right">
-      <span class="health"><span class="dot" id="healthDot"></span><span id="healthText">Bağlanıyor…</span></span>
-      <button id="logoutBtn" class="small ghost" style="display:none">Çıkış</button>
-    </div>`;
-  document.body.prepend(header);
+  // Mevcut içeriği (.content > main) bir sarmalayıcıya taşı. Script düğümleri body'de kalır.
+  const content = document.createElement("div");
+  content.className = "content";
+  Array.from(document.body.children).forEach((node) => {
+    if (node.tagName !== "SCRIPT") content.appendChild(node);
+  });
 
-  const footer = document.createElement("footer");
-  footer.className = "site-footer";
-  footer.innerHTML = `<span>Gemini API Web · çok hesaplı görsel üretimi</span><span>${esc(window.location.host)}</span>`;
-  document.body.appendChild(footer);
+  const sidebar = document.createElement("aside");
+  sidebar.className = "sidebar";
+  sidebar.innerHTML = `
+    <div class="brand">
+      <img src="/static/logo.svg" alt="logo">
+      <div class="name">Studio<small>Gemini Görsel</small></div>
+    </div>
+    <nav class="side-nav">${navHtml}</nav>
+    <div class="side-foot">
+      <span class="health"><span class="dot" id="healthDot"></span><span id="healthText">Bağlanıyor…</span></span>
+      <button id="logoutBtn" class="small ghost" style="display:none">Çıkış yap</button>
+    </div>`;
+
+  document.body.appendChild(sidebar);
+  document.body.appendChild(content);
 
   $("logoutBtn").onclick = async () => {
     await fetch("/v1/admin/logout", { method: "POST" });
