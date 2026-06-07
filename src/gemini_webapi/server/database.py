@@ -117,6 +117,17 @@ class GemCacheRecord:
 
 
 @dataclass(frozen=True)
+class CustomGem:
+    id: str
+    name: str
+    prompt: str
+    description: str | None
+    is_default: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class GeminiFileRecord:
     id: str
     filename: str
@@ -242,6 +253,16 @@ class AccountStore:
                 path TEXT NOT NULL,
                 size INTEGER NOT NULL,
                 created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS custom_gems (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                description TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
             """
         )
@@ -822,6 +843,12 @@ class AccountStore:
         ).fetchone()
         return self._row_to_media_output(row) if row else None
 
+    def get_media_output(self, media_id: int) -> MediaOutput | None:
+        row = self.conn.execute(
+            "SELECT * FROM media_outputs WHERE id = ?", (media_id,)
+        ).fetchone()
+        return self._row_to_media_output(row) if row else None
+
     def set_media_cooldown(
         self,
         *,
@@ -941,6 +968,93 @@ class AccountStore:
     def list_gems_cache(self) -> list[GemCacheRecord]:
         rows = self.conn.execute("SELECT * FROM gems_cache ORDER BY name").fetchall()
         return [self._row_to_gem_cache(row) for row in rows]
+
+    def list_custom_gems(self) -> list[CustomGem]:
+        rows = self.conn.execute(
+            "SELECT * FROM custom_gems ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        return [self._row_to_custom_gem(row) for row in rows]
+
+    def get_custom_gem(self, gem_id: str) -> CustomGem | None:
+        row = self.conn.execute(
+            "SELECT * FROM custom_gems WHERE id = ?", (gem_id,)
+        ).fetchone()
+        return self._row_to_custom_gem(row) if row else None
+
+    def get_default_custom_gem(self) -> CustomGem | None:
+        row = self.conn.execute(
+            "SELECT * FROM custom_gems WHERE is_default = 1 ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        return self._row_to_custom_gem(row) if row else None
+
+    def create_custom_gem(
+        self,
+        *,
+        name: str,
+        prompt: str,
+        description: str | None = None,
+        is_default: bool = False,
+    ) -> CustomGem:
+        now = utc_now()
+        gem_id = uuid.uuid4().hex
+        with self.conn:
+            if is_default:
+                self.conn.execute("UPDATE custom_gems SET is_default = 0")
+            self.conn.execute(
+                """
+                INSERT INTO custom_gems (
+                    id, name, prompt, description, is_default, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (gem_id, name, prompt, description, 1 if is_default else 0, now, now),
+            )
+        gem = self.get_custom_gem(gem_id)
+        if gem is None:
+            raise RuntimeError("Failed to load created custom gem.")
+        return gem
+
+    def update_custom_gem(
+        self,
+        gem_id: str,
+        *,
+        name: str,
+        prompt: str,
+        description: str | None = None,
+        is_default: bool | None = None,
+    ) -> CustomGem | None:
+        existing = self.get_custom_gem(gem_id)
+        if existing is None:
+            return None
+        resolved_default = existing.is_default if is_default is None else is_default
+        with self.conn:
+            if resolved_default:
+                self.conn.execute(
+                    "UPDATE custom_gems SET is_default = 0 WHERE id != ?", (gem_id,)
+                )
+            self.conn.execute(
+                """
+                UPDATE custom_gems
+                SET name = ?, prompt = ?, description = ?, is_default = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    name,
+                    prompt,
+                    description,
+                    1 if resolved_default else 0,
+                    utc_now(),
+                    gem_id,
+                ),
+            )
+        return self.get_custom_gem(gem_id)
+
+    def delete_custom_gem(self, gem_id: str) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "DELETE FROM custom_gems WHERE id = ?", (gem_id,)
+            )
+        return cursor.rowcount > 0
 
     def add_file(
         self,
@@ -1065,6 +1179,17 @@ class AccountStore:
             description=row["description"],
             prompt=row["prompt"],
             predefined=bool(row["predefined"]),
+            updated_at=row["updated_at"],
+        )
+
+    def _row_to_custom_gem(self, row: sqlite3.Row) -> CustomGem:
+        return CustomGem(
+            id=row["id"],
+            name=row["name"],
+            prompt=row["prompt"],
+            description=row["description"],
+            is_default=bool(row["is_default"]),
+            created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
 

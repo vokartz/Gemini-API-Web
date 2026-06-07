@@ -75,8 +75,12 @@ DEFAULT_SYSTEM_SETTINGS = {
 class GenerateRequest(BaseModel):
     prompt: str
     model: str | None = None
-    mode: str | None = None
+    mode: str | None = "image"
     temporary: bool = False
+    gem_id: str | None = None
+    aspect_ratio: str | None = None
+    output_format: str = "png"
+    store_media: bool = True
 
 
 class GeminiGenerateRequest(BaseModel):
@@ -97,6 +101,13 @@ class GemRequest(BaseModel):
     name: str
     prompt: str
     description: str = ""
+
+
+class CustomGemRequest(BaseModel):
+    name: str
+    prompt: str
+    description: str = ""
+    is_default: bool = False
 
 
 class DeepResearchCreateRequest(BaseModel):
@@ -181,58 +192,6 @@ class AuthSaveRequest(BaseModel):
     name: str | None = None
 
 
-class FunctionToolSpec(BaseModel):
-    name: str
-    description: str | None = None
-    parameters: dict[str, Any] | None = None
-
-
-class ChatToolSpec(BaseModel):
-    type: str = "function"
-    function: FunctionToolSpec
-
-
-class ChatMessage(BaseModel):
-    role: str
-    content: str | list[dict[str, Any]] | None = None
-    name: str | None = None
-    tool_call_id: str | None = None
-    tool_calls: list[dict[str, Any]] | None = None
-
-
-class ChatCompletionRequest(BaseModel):
-    model: str | None = None
-    messages: list[ChatMessage]
-    stream: bool = False
-    temperature: float | None = None
-    max_tokens: int | None = None
-    top_p: float | None = None
-    n: int | None = None
-    stop: str | list[str] | None = None
-    tools: list[ChatToolSpec] | None = None
-    tool_choice: str | dict[str, Any] | None = None
-    parallel_tool_calls: bool | None = None
-
-
-class ResponsesRequest(BaseModel):
-    model: str | None = None
-    input: str | list[Any]
-    stream: bool = False
-    temperature: float | None = None
-    max_output_tokens: int | None = None
-    top_p: float | None = None
-
-
-class ImageGenerationRequest(BaseModel):
-    prompt: str
-    model: str | None = None
-    n: int | None = None
-    size: str | None = None
-    quality: str | None = None
-    response_format: str | None = None
-    store_media: bool = False
-
-
 MODEL_ALIASES = {
     "gemini": "gemini-3.1-pro",
 }
@@ -243,12 +202,6 @@ PUBLIC_MODEL_IDS = {
     "gemini-3.1-flash-lite",
 }
 
-PUBLIC_MODEL_ORDER = [
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.1-pro",
-]
-
 REMOVED_MODEL_IDS = {
     "gemini-3-pro",
     "gemini-3-pro-preview",
@@ -257,355 +210,6 @@ REMOVED_MODEL_IDS = {
     "gemini-3-flash-preview",
     "gemini-3-flash-thinking",
 }
-
-
-def _message_content_to_text(content: str | list[dict[str, Any]] | None) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    parts: list[str] = []
-    for item in content:
-        item_type = item.get("type")
-        if item_type in {"text", "input_text"} and isinstance(item.get("text"), str):
-            parts.append(item["text"])
-        elif item_type in {"image_url", "input_image"}:
-            # OpenAI çok modlu mesajlardaki resim URL'si açık bir metin referansına dönüştürülür; harici istemciler resim gönderdiğinde sessizce atlanmaz.
-            image_url = item.get("image_url")
-            url = ""
-            if isinstance(image_url, str):
-                url = image_url
-            elif isinstance(image_url, dict) and isinstance(image_url.get("url"), str):
-                url = image_url["url"]
-            elif isinstance(item.get("url"), str):
-                url = item["url"]
-            if url:
-                parts.append(f"Image URL: {url}")
-    return "\n".join(parts)
-
-
-def _messages_to_prompt(messages: list[ChatMessage]) -> str:
-    prompt_parts: list[str] = []
-    for message in messages:
-        text = _message_content_to_text(message.content)
-        role = message.role.lower()
-        if role == "system":
-            if not text:
-                continue
-            prompt_parts.append(f"System: {text}")
-        elif role == "assistant":
-            if text:
-                prompt_parts.append(f"Assistant: {text}")
-            if message.tool_calls:
-                prompt_parts.append(
-                    f"Assistant tool calls: {json.dumps(message.tool_calls).decode()}"
-                )
-        elif role == "tool":
-            if not text:
-                continue
-            label = message.name or message.tool_call_id or "tool"
-            prompt_parts.append(f"Tool result ({label}): {text}")
-        else:
-            if not text:
-                continue
-            prompt_parts.append(f"User: {text}")
-    return "\n\n".join(prompt_parts)
-
-
-def _responses_input_to_messages(input_value: str | list[Any]) -> list[ChatMessage]:
-    """OpenAI Responses API'nin input alanını mevcut Chat Completions mesajlarına dönüştürür."""
-    if isinstance(input_value, str):
-        return [ChatMessage(role="user", content=input_value)]
-    messages: list[ChatMessage] = []
-    for item in input_value:
-        if isinstance(item, str):
-            messages.append(ChatMessage(role="user", content=item))
-            continue
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "user")
-        content = item.get("content")
-        if isinstance(content, str) or content is None:
-            messages.append(ChatMessage(role=role, content=content))
-        elif isinstance(content, list):
-            parts = [part for part in content if isinstance(part, dict)]
-            messages.append(ChatMessage(role=role, content=parts))
-    return messages
-
-
-def _responses_output(
-    *,
-    response_id: str,
-    model: str,
-    text: str,
-    created: int | None = None,
-) -> dict[str, Any]:
-    """OpenAI Responses API'nin temel yanıt yapısını döndürür."""
-    output_id = f"msg_{uuid.uuid4().hex}"
-    content_id = f"out_{uuid.uuid4().hex}"
-    return {
-        "id": response_id,
-        "object": "response",
-        "created_at": created or int(time.time()),
-        "status": "completed",
-        "model": model,
-        "output_text": text,
-        "output": [
-            {
-                "id": output_id,
-                "type": "message",
-                "status": "completed",
-                "role": "assistant",
-                "content": [
-                    {
-                        "id": content_id,
-                        "type": "output_text",
-                        "text": text,
-                        "annotations": [],
-                    }
-                ],
-            }
-        ],
-        "usage": {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-        },
-    }
-
-
-def _openai_image_generation_output(
-    media_items: list[Any],
-    *,
-    revised_prompt: str | None = None,
-) -> dict[str, Any]:
-    data: list[dict[str, Any]] = []
-    for item in media_items:
-        media = _media_record_dict(item)
-        url = media.get("content_url") or media.get("url")
-        if not url:
-            continue
-        row: dict[str, Any] = {"url": url}
-        if revised_prompt:
-            row["revised_prompt"] = revised_prompt
-        data.append(row)
-    return {"created": int(time.time()), "data": data}
-
-
-def _tools_enabled(request: ChatCompletionRequest) -> bool:
-    if not request.tools:
-        return False
-    return request.tool_choice != "none"
-
-
-def _tool_choice_name(tool_choice: str | dict[str, Any] | None) -> str | None:
-    if not isinstance(tool_choice, dict):
-        return None
-    function = tool_choice.get("function")
-    if isinstance(function, dict) and isinstance(function.get("name"), str):
-        return function["name"]
-    return None
-
-
-def _tool_specs_text(tools: list[ChatToolSpec]) -> str:
-    lines: list[str] = []
-    for tool in tools:
-        if tool.type != "function":
-            continue
-        function = tool.function
-        parameters = function.parameters or {"type": "object", "properties": {}}
-        lines.append(
-            "\n".join(
-                [
-                    f"- name: {function.name}",
-                    f"  description: {function.description or ''}",
-                    f"  parameters: {json.dumps(parameters).decode()}",
-                ]
-            )
-        )
-    return "\n".join(lines)
-
-
-def _append_tool_instructions(prompt: str, request: ChatCompletionRequest) -> str:
-    if not _tools_enabled(request):
-        return prompt
-    tools = request.tools or []
-    forced_name = _tool_choice_name(request.tool_choice)
-    choice_line = "If no tool is needed, answer normally."
-    if request.tool_choice == "required":
-        choice_line = "You must call one of the available tools."
-    if forced_name:
-        choice_line = f"You must call the tool named {forced_name}."
-    parallel_line = ""
-    if request.parallel_tool_calls is False:
-        parallel_line = "Return at most one tool call."
-    instructions = f"""
-Tool calling is available.
-When a tool is needed, respond with only valid JSON in this exact schema:
-{{"tool_calls":[{{"name":"tool_name","arguments":{{}}}}]}}
-Do not wrap the JSON in markdown. Do not include natural language with a tool call.
-{choice_line}
-{parallel_line}
-Available tools:
-{_tool_specs_text(tools)}
-"""
-    return f"{prompt}\n\nSystem: {instructions.strip()}"
-
-
-def _strip_json_fence(text: str) -> str:
-    stripped = text.strip()
-    if not stripped.startswith("```"):
-        return stripped
-    lines = stripped.splitlines()
-    if len(lines) >= 2 and lines[-1].strip() == "```":
-        return "\n".join(lines[1:-1]).strip()
-    return stripped
-
-
-def _extract_json_value(text: str) -> Any | None:
-    stripped = _strip_json_fence(text)
-    try:
-        return json.loads(stripped)
-    except Exception:
-        pass
-    start = stripped.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escape = False
-    for index, char in enumerate(stripped[start:], start):
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(stripped[start : index + 1])
-                except Exception:
-                    return None
-    return None
-
-
-def _arguments_to_openai_json(arguments: Any) -> str:
-    if arguments is None:
-        return "{}"
-    if isinstance(arguments, str):
-        return arguments
-    return json.dumps(arguments).decode()
-
-
-def _normalize_tool_call(
-    item: Any,
-    allowed_names: set[str],
-) -> dict[str, Any] | None:
-    if not isinstance(item, dict):
-        return None
-    function = item.get("function")
-    if isinstance(function, dict):
-        name = function.get("name")
-        arguments = function.get("arguments", item.get("arguments"))
-    elif isinstance(function, str):
-        name = function
-        arguments = item.get("arguments")
-    else:
-        name = item.get("name") or item.get("tool_name")
-        arguments = item.get("arguments") if "arguments" in item else item.get("args")
-    if not isinstance(name, str) or name not in allowed_names:
-        return None
-    call_id = item.get("id") if isinstance(item.get("id"), str) else f"call_{uuid.uuid4().hex}"
-    return {
-        "id": call_id,
-        "type": "function",
-        "function": {
-            "name": name,
-            "arguments": _arguments_to_openai_json(arguments),
-        },
-    }
-
-
-def _tool_calls_from_output_text(
-    text: str,
-    tools: list[ChatToolSpec] | None,
-) -> list[dict[str, Any]]:
-    if not tools:
-        return []
-    parsed = _extract_json_value(text)
-    if not isinstance(parsed, dict):
-        return []
-    raw_calls: Any
-    if isinstance(parsed.get("tool_calls"), list):
-        raw_calls = parsed["tool_calls"]
-    elif isinstance(parsed.get("tool_call"), dict):
-        raw_calls = [parsed["tool_call"]]
-    elif "name" in parsed or "function" in parsed:
-        raw_calls = [parsed]
-    else:
-        return []
-    allowed_names = {tool.function.name for tool in tools if tool.type == "function"}
-    calls: list[dict[str, Any]] = []
-    for item in raw_calls:
-        call = _normalize_tool_call(item, allowed_names)
-        if call:
-            calls.append(call)
-    return calls
-
-
-def _chat_tool_calls_chunk(
-    completion_id: str,
-    model: str,
-    tool_calls: list[dict[str, Any]],
-) -> dict[str, Any]:
-    stream_calls = []
-    for index, call in enumerate(tool_calls):
-        stream_calls.append(
-            {
-                "index": index,
-                "id": call["id"],
-                "type": "function",
-                "function": call["function"],
-            }
-        )
-    return {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "delta": {"tool_calls": stream_calls},
-                "finish_reason": None,
-            }
-        ],
-    }
-
-
-def _openai_model_ids() -> list[str]:
-    return [
-        "gemini",
-        *PUBLIC_MODEL_ORDER,
-    ]
-
-
-def _openai_model_object(model_id: str, created: int | None = None) -> dict[str, Any]:
-    """Model listesi ve tekil model sorgusu için ortak kullanılan OpenAI uyumlu model nesnesini döndürür."""
-    return {
-        "id": model_id,
-        "object": "model",
-        "created": created or int(time.time()),
-        "owned_by": "google",
-    }
 
 
 def _resolve_model_arg(model: str | None) -> str | None:
@@ -646,6 +250,35 @@ def _generation_mode_arg(mode: str | None) -> str | None:
     if normalized not in {"image", "video", "audio"}:
         raise ValueError("mode must be one of: image, video, audio.")
     return normalized
+
+
+SUPPORTED_ASPECT_RATIOS = {"1:1", "16:9", "9:16"}
+
+
+def _aspect_ratio_arg(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().replace(" ", "")
+    if normalized not in SUPPORTED_ASPECT_RATIOS:
+        raise ValueError("aspect_ratio must be one of: 1:1, 16:9, 9:16.")
+    return normalized
+
+
+def _apply_aspect_ratio(prompt: str, aspect_ratio: str | None) -> str:
+    # Gemini Web'in görsel üretiminde en-boy oranı için ayrı bir parametre yoktur; oran prompt
+    # içine açık bir talimat olarak eklenir.
+    if not aspect_ratio:
+        return prompt
+    return f"{prompt}\n\n(Generate the image with a {aspect_ratio} aspect ratio.)"
+
+
+def _output_format_arg(value: str | None) -> str:
+    normalized = (value or "png").strip().lower()
+    if normalized in {"jpg", "jpeg"}:
+        return "jpeg"
+    if normalized == "png":
+        return "png"
+    raise ValueError("output_format must be png or jpg.")
 
 
 def _ensure_media_generation_result(output: Any, mode: str | None) -> None:
@@ -692,34 +325,6 @@ def _openai_error(message: str, status_code: int, error_type: str = "api_error")
             "param": None,
             "code": status_code,
         }
-    }
-
-
-def _chat_chunk(
-    completion_id: str,
-    model: str,
-    content: str = "",
-    *,
-    role: str | None = None,
-    finish_reason: str | None = None,
-) -> dict[str, Any]:
-    delta: dict[str, str] = {}
-    if role:
-        delta["role"] = role
-    if content:
-        delta["content"] = content
-    return {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "delta": delta,
-                "finish_reason": finish_reason,
-            }
-        ],
     }
 
 
@@ -1008,27 +613,6 @@ def _file_dict(file_record: Any) -> dict[str, Any]:
     return file_record.__dict__
 
 
-def _openai_file_object(file_record: Any) -> dict[str, Any]:
-    created_at = 0
-    try:
-        created_at = int(
-            datetime.fromisoformat(
-                file_record.created_at.replace("Z", "+00:00")
-            ).timestamp()
-        )
-    except Exception:
-        created_at = int(time.time())
-    return {
-        "id": file_record.id,
-        "object": "file",
-        "bytes": file_record.size,
-        "created_at": created_at,
-        "filename": file_record.filename,
-        "purpose": "assistants",
-        "status": "processed",
-    }
-
-
 def _gem_dict(gem: Any) -> dict[str, Any]:
     return {
         "id": gem.id,
@@ -1122,18 +706,12 @@ def create_app(config: ServerConfig | None = None):
                 request.cookies.get("gemini_admin_session"),
             )
             external_api_path = path in {
-                "/v1/models",
-                "/v1/chat/completions",
-                "/v1/responses",
-                "/v1/images/generations",
                 "/v1/generate",
                 "/v1/gemini/generate",
                 "/v1/gemini/stream",
                 "/v1/gemini/media",
                 "/v1/gemini/files",
-                "/v1/files",
-            } or path.startswith("/v1/models/") or _public_media_content_path(path)
-            external_api_path = external_api_path or path.startswith("/v1/files/")
+            } or _public_media_content_path(path)
             if not admin_ok and not external_api_path:
                 return JSONResponse(
                     status_code=401,
@@ -1496,63 +1074,6 @@ def create_app(config: ServerConfig | None = None):
             "file": _file_dict(record),
         }
 
-    @app.get("/v1/files")
-    async def openai_list_files(limit: int = 80) -> dict[str, Any]:
-        return {
-            "object": "list",
-            "data": [
-                _openai_file_object(item)
-                for item in store.list_files(limit=max(1, min(limit, 500)))
-            ],
-        }
-
-    @app.post("/v1/files")
-    async def openai_upload_file(
-        file: UploadFile = File(...),
-        purpose: str | None = None,
-    ) -> dict[str, Any]:
-        record = await _save_uploaded_file(file)
-        return _openai_file_object(record)
-
-    @app.get("/v1/files/{file_id}")
-    async def openai_get_file(file_id: str) -> dict[str, Any]:
-        record = store.get_file(file_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="File not found.")
-        return _openai_file_object(record)
-
-    @app.get("/v1/files/{file_id}/content")
-    async def openai_get_file_content(file_id: str) -> Response:
-        record = store.get_file(file_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="File not found.")
-        path = Path(record.path)
-        if not path.is_file():
-            raise HTTPException(status_code=404, detail="File content not found.")
-        return FileResponse(
-            path,
-            media_type=record.content_type or "application/octet-stream",
-            filename=record.filename,
-        )
-
-    @app.delete("/v1/files/{file_id}")
-    async def openai_delete_file(file_id: str) -> dict[str, Any]:
-        record = store.get_file(file_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="File not found.")
-        deleted = store.delete_file(file_id)
-        path = Path(record.path)
-        if path.is_file():
-            try:
-                path.unlink()
-            except OSError:
-                pass
-        return {
-            "id": file_id,
-            "object": "file",
-            "deleted": bool(deleted),
-        }
-
     async def _gem_arg(client: Any, request: GeminiGenerateRequest) -> str | None:
         if request.gem:
             return request.gem
@@ -1632,7 +1153,7 @@ def create_app(config: ServerConfig | None = None):
             logger.warning(f"Tam boyutlu görsel indirilemedi, önizlemeye düşülüyor: {exc}")
             return {}
 
-    def _strip_watermark_bytes(content: bytes) -> dict[str, Any]:
+    def _strip_watermark_bytes(content: bytes, output_format: str = "PNG") -> dict[str, Any]:
         # Üretilen her görselin Gemini filigranı, kaydedilmeden önce kaldırılır. Filigran kaldırma
         # ters alfa harmanlamayla görselin yerel (native) çözünürlüğünde çalışır; bu yüzden bu adım
         # yalnızca tam-boyut indirme sonrası uygulanır. pillow/numpy yoksa adım atlanır.
@@ -1644,9 +1165,13 @@ def create_app(config: ServerConfig | None = None):
                 f"(pip install -e '.[server]'). Ayrıntı: {exc}"
             )
             return {}
+        fmt = (output_format or "PNG").upper()
+        if fmt == "JPG":
+            fmt = "JPEG"
+        content_type = "image/jpeg" if fmt == "JPEG" else "image/png"
         try:
-            cleaned = remove_watermark_bytes(content, output_format="PNG")
-            return {"content": cleaned, "content_type": "image/png", "size": len(cleaned)}
+            cleaned = remove_watermark_bytes(content, output_format=fmt, quality=92)
+            return {"content": cleaned, "content_type": content_type, "size": len(cleaned)}
         except Exception as exc:
             logger.warning(f"Filigran kaldırma başarısız oldu: {exc}")
             return {}
@@ -1749,6 +1274,7 @@ def create_app(config: ServerConfig | None = None):
         account_id: int | None,
         output: Any,
         store_media: bool = False,
+        image_format: str = "PNG",
     ) -> int:
         count = 0
         image_objs = _generated_image_map(output)
@@ -1766,7 +1292,7 @@ def create_app(config: ServerConfig | None = None):
             # Üretilen görsellerde filigranı kaydetmeden önce kaldır (CPU işini ayrı iş parçacığında çalıştır).
             if downloaded and item.get("kind") == "image":
                 cleaned = await asyncio.to_thread(
-                    _strip_watermark_bytes, downloaded["content"]
+                    _strip_watermark_bytes, downloaded["content"], image_format
                 )
                 if cleaned:
                     downloaded = {**downloaded, **cleaned}
@@ -2091,6 +1617,111 @@ def create_app(config: ServerConfig | None = None):
             "accounts_succeeded": len(deleted),
         }
 
+    def _custom_gem_dict(gem: Any) -> dict[str, Any]:
+        return {
+            "id": gem.id,
+            "name": gem.name,
+            "prompt": gem.prompt,
+            "description": gem.description,
+            "is_default": gem.is_default,
+            "created_at": gem.created_at,
+            "updated_at": gem.updated_at,
+        }
+
+    async def _sync_custom_gem_to_accounts(
+        *, name: str, prompt: str, description: str, previous_name: str | None = None
+    ) -> dict[str, int]:
+        # Özel gem'i tüm Gemini hesaplarına ada göre uygular: hesapta varsa günceller, yoksa
+        # oluşturur. Böylece rotator hangi hesaba düşerse düşsün, üretimde gem ada göre bulunur.
+        async def operation(client, account):
+            lookup = previous_name or name
+            gems = await client.fetch_gems()
+            match = gems.get(name=lookup)
+            if match is None and previous_name:
+                match = gems.get(name=name)
+            if match is not None:
+                return await client.update_gem(
+                    gem=match.id, name=name, prompt=prompt, description=description
+                )
+            return await client.create_gem(
+                name=name, prompt=prompt, description=description
+            )
+
+        results = await rotator.run_on_each_account(operation)
+        succeeded = [r for r in results if r["error"] is None and r["result"] is not None]
+        return {"accounts_total": len(results), "accounts_succeeded": len(succeeded)}
+
+    @app.get("/v1/custom-gems")
+    async def list_custom_gems() -> dict[str, Any]:
+        return {
+            "ok": True,
+            "gems": [_custom_gem_dict(gem) for gem in store.list_custom_gems()],
+        }
+
+    @app.post("/v1/custom-gems")
+    async def create_custom_gem(request: CustomGemRequest) -> dict[str, Any]:
+        if not request.name.strip():
+            raise HTTPException(status_code=400, detail="Gem adı boş olamaz.")
+        if not request.prompt.strip():
+            raise HTTPException(status_code=400, detail="Gem promptu boş olamaz.")
+        gem = store.create_custom_gem(
+            name=request.name.strip(),
+            prompt=request.prompt,
+            description=request.description or None,
+            is_default=request.is_default,
+        )
+        sync = await _sync_custom_gem_to_accounts(
+            name=gem.name, prompt=gem.prompt, description=gem.description or ""
+        )
+        return {"ok": True, "gem": _custom_gem_dict(gem), "sync": sync}
+
+    @app.patch("/v1/custom-gems/{gem_id}")
+    async def update_custom_gem(gem_id: str, request: CustomGemRequest) -> dict[str, Any]:
+        existing = store.get_custom_gem(gem_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Özel gem bulunamadı.")
+        if not request.name.strip():
+            raise HTTPException(status_code=400, detail="Gem adı boş olamaz.")
+        if not request.prompt.strip():
+            raise HTTPException(status_code=400, detail="Gem promptu boş olamaz.")
+        gem = store.update_custom_gem(
+            gem_id,
+            name=request.name.strip(),
+            prompt=request.prompt,
+            description=request.description or None,
+            is_default=request.is_default,
+        )
+        sync = await _sync_custom_gem_to_accounts(
+            name=gem.name,
+            prompt=gem.prompt,
+            description=gem.description or "",
+            previous_name=existing.name if existing.name != gem.name else None,
+        )
+        return {"ok": True, "gem": _custom_gem_dict(gem), "sync": sync}
+
+    @app.delete("/v1/custom-gems/{gem_id}")
+    async def delete_custom_gem(gem_id: str) -> dict[str, Any]:
+        existing = store.get_custom_gem(gem_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Özel gem bulunamadı.")
+        store.delete_custom_gem(gem_id)
+
+        async def operation(client, account):
+            gems = await client.fetch_gems()
+            match = gems.get(name=existing.name)
+            if match is None:
+                return False
+            await client.delete_gem(match.id)
+            return True
+
+        results = await rotator.run_on_each_account(operation)
+        deleted = [r for r in results if r["error"] is None and r["result"]]
+        return {
+            "ok": True,
+            "accounts_total": len(results),
+            "accounts_succeeded": len(deleted),
+        }
+
     @app.post("/v1/gemini/deep-research/plan")
     async def create_deep_research_plan(
         request: DeepResearchCreateRequest,
@@ -2256,22 +1887,6 @@ def create_app(config: ServerConfig | None = None):
             result=result_data,
         )
         return {"ok": True, "job": _job_dict(store.get_job(request.job_id)), "result": result_data}
-
-    @app.get("/v1/models")
-    async def models() -> dict[str, Any]:
-        now = int(time.time())
-        return {
-            "object": "list",
-            "data": [_openai_model_object(model_id, now) for model_id in _openai_model_ids()],
-        }
-
-    @app.get("/v1/models/{model_id}")
-    async def model_detail(model_id: str) -> dict[str, Any]:
-        try:
-            _resolve_model_arg(model_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return _openai_model_object(model_id)
 
     @app.get("/v1/accounts")
     async def list_accounts() -> dict[str, Any]:
@@ -2446,237 +2061,196 @@ def create_app(config: ServerConfig | None = None):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {**result, "validation": validation, "accounts": rotator.status()["accounts"]}
 
-    @app.post("/v1/generate")
-    async def generate(request: GenerateRequest) -> dict[str, Any]:
-        try:
-            generation_mode = _generation_mode_arg(request.mode)
-            resolved_model = _resolve_model_arg(request.model)
-
-            async def operation(client):
-                kwargs: dict[str, Any] = {"temporary": request.temporary}
-                if resolved_model:
-                    kwargs["model"] = resolved_model
-                if generation_mode:
-                    kwargs["generation_mode"] = generation_mode
-                output = await client.generate_content(request.prompt, **kwargs)
-                _ensure_media_generation_result(output, generation_mode)
-                return output
-
-            output = await rotator.run(
-                operation,
-                endpoint="/v1/generate",
-                model=request.model or "gemini",
-                output_type=f"gemini_{request.mode or 'native'}",
-                require_video_generation=generation_mode == "video",
-                media_generation_mode=generation_mode,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-        return {
-            "text": output.text,
-            "metadata": output.metadata,
-            "account": rotator.status()["current_account_id"],
-        }
-
-    @app.post("/v1/responses")
-    async def responses(request: ResponsesRequest) -> dict[str, Any]:
-        if request.stream:
-            raise HTTPException(
-                status_code=400,
-                detail="/v1/responses stream is not supported yet. Use /v1/chat/completions with stream=true.",
-            )
-        messages = _responses_input_to_messages(request.input)
-        prompt = _messages_to_prompt(messages)
-        if not prompt:
-            raise HTTPException(status_code=400, detail="input must contain text.")
-        model = request.model or "gemini"
-        try:
-            resolved_model = _resolve_model_arg(request.model)
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-
-        async def operation(client):
-            kwargs: dict[str, Any] = {}
-            if resolved_model:
-                kwargs["model"] = resolved_model
-            return await client.generate_content(prompt, **kwargs)
-
-        try:
-            output = await rotator.run(
-                operation,
-                endpoint="/v1/responses",
-                model=model,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-        return _responses_output(
-            response_id=f"resp_{uuid.uuid4().hex}",
-            model=model,
-            text=output.text,
+    async def _resolve_custom_gem_for_generation(
+        client: Any, gem_id: str | None
+    ) -> str | None:
+        # Özel gem DB'sindeki id'yi, çalışan hesabın kendi gem id'sine çözer. Hesapta o adda
+        # gem yoksa otomatik oluşturur; böylece rotator hangi hesaba düşerse düşsün üretimde gem
+        # her zaman mevcut olur.
+        if not gem_id:
+            record = store.get_default_custom_gem()
+            if record is None:
+                return None
+        else:
+            record = store.get_custom_gem(gem_id)
+            if record is None:
+                raise ValueError(f"Özel gem bulunamadı: {gem_id}")
+        gems = await client.fetch_gems()
+        match = gems.get(name=record.name)
+        if match is not None:
+            return match.id
+        created = await client.create_gem(
+            name=record.name,
+            prompt=record.prompt,
+            description=record.description or "",
         )
+        return created.id
 
-    @app.post("/v1/images/generations")
-    async def image_generations(request: ImageGenerationRequest) -> dict[str, Any]:
-        if request.response_format and request.response_format != "url":
-            raise HTTPException(
-                status_code=400,
-                detail="Only response_format=url is supported for /v1/images/generations.",
-            )
-        if request.n is not None and request.n < 1:
-            raise HTTPException(status_code=400, detail="n must be at least 1.")
-        request_id = f"img-{uuid.uuid4().hex}"
-        generation_mode = "image"
-        try:
-            resolved_model = _resolve_model_arg(request.model)
+    async def _save_generate_media(
+        *,
+        request_id: str,
+        account_id: int | None,
+        output: Any,
+        output_format: str,
+        store_media: bool,
+    ) -> list[dict[str, Any]]:
+        # Üretilen her görseli filigransız olarak hem PNG hem JPG biçiminde CDN'e (veya yerel
+        # önbelleğe) yazar ve içerik bağlantılarını döndürür.
+        image_objs = _generated_image_map(output)
+        results: list[dict[str, Any]] = []
+        formats = [("png", "PNG"), ("jpeg", "JPEG")]
+        # İstenen biçim ilk sırada dönsün.
+        if output_format == "jpeg":
+            formats = [("jpeg", "JPEG"), ("png", "PNG")]
 
-            async def operation(client):
-                kwargs: dict[str, Any] = {"generation_mode": generation_mode}
-                if resolved_model:
-                    kwargs["model"] = resolved_model
-                output = await client.generate_content(request.prompt, **kwargs)
-                _ensure_media_generation_result(output, generation_mode)
-                return output
+        for item in _media_entries(output):
+            if item.get("kind") != "image":
+                continue
+            source: dict[str, Any] = {}
+            image_obj = image_objs.get(item.get("image_id"))
+            if image_obj is not None:
+                source = await _download_full_size_generated_image(image_obj)
+                if source and image_obj.url:
+                    item["url"] = image_obj.url
+            if not source:
+                source = _download_media_item(item, full_size=True)
+            if not source.get("content"):
+                continue
 
-            output = await rotator.run(
-                operation,
-                endpoint="/v1/images/generations",
-                model=request.model or "gemini",
-                output_type="gemini_image",
-                job_id=request_id,
-                media_generation_mode=generation_mode,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-
-        account_id = rotator.status()["current_account_id"]
-        media_count = await _save_media_index(
-            request_id=request_id,
-            account_id=account_id,
-            output=output,
-            store_media=request.store_media,
-        )
-        if media_count:
-            store.update_request_log_media_count(request_id, media_count)
-        media_items = [
-            item
-            for item in store.list_media_outputs(limit=max(media_count, 1), kind="image")
-            if item.request_id == request_id
-        ]
-        if not media_items:
-            raise HTTPException(status_code=502, detail="Image generation did not return a usable image URL.")
-        return _openai_image_generation_output(media_items, revised_prompt=request.prompt)
-
-    @app.post("/v1/chat/completions")
-    async def chat_completions(request: ChatCompletionRequest):
-        prompt = _messages_to_prompt(request.messages)
-        if not prompt:
-            raise HTTPException(status_code=400, detail="messages must contain text.")
-        prompt = _append_tool_instructions(prompt, request)
-        model = request.model or "gemini"
-        try:
-            resolved_model = _resolve_model_arg(request.model)
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-
-        if request.stream:
-            completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-
-            async def event_stream():
-                first = _chat_chunk(completion_id, model, role="assistant")
-                yield f"data: {json.dumps(first).decode()}\n\n"
-                buffered_text: list[str] = []
-
-                async def operation(client):
-                    kwargs: dict[str, Any] = {}
-                    if resolved_model:
-                        kwargs["model"] = resolved_model
-                    async for output in client.generate_content_stream(prompt, **kwargs):
-                        yield output
-
-                try:
-                    async for output in rotator.run_stream(
-                        operation,
-                        endpoint="/v1/chat/completions",
-                        model=model,
-                    ):
-                        delta = output.text_delta or ""
-                        if delta:
-                            if _tools_enabled(request):
-                                buffered_text.append(delta)
-                                continue
-                            chunk = _chat_chunk(completion_id, model, content=delta)
-                            yield f"data: {json.dumps(chunk).decode()}\n\n"
-                except Exception as exc:
-                    error = _openai_error(str(exc), _error_status(exc))
-                    yield f"data: {json.dumps(error).decode()}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-
-                finish_reason = "stop"
-                if _tools_enabled(request):
-                    text = "".join(buffered_text)
-                    tool_calls = _tool_calls_from_output_text(text, request.tools)
-                    if tool_calls:
-                        tool_chunk = _chat_tool_calls_chunk(completion_id, model, tool_calls)
-                        yield f"data: {json.dumps(tool_chunk).decode()}\n\n"
-                        finish_reason = "tool_calls"
-                    elif text:
-                        chunk = _chat_chunk(completion_id, model, content=text)
-                        yield f"data: {json.dumps(chunk).decode()}\n\n"
-                final = _chat_chunk(completion_id, model, finish_reason=finish_reason)
-                yield f"data: {json.dumps(final).decode()}\n\n"
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-        async def operation(client):
-            kwargs: dict[str, Any] = {}
-            if resolved_model:
-                kwargs["model"] = resolved_model
-            return await client.generate_content(prompt, **kwargs)
-
-        try:
-            output = await rotator.run(
-                operation,
-                endpoint="/v1/chat/completions",
-                model=model,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
-
-        created = int(time.time())
-        tool_calls = (
-            _tool_calls_from_output_text(output.text, request.tools)
-            if _tools_enabled(request)
-            else []
-        )
-        message: dict[str, Any] = {"role": "assistant", "content": output.text}
-        finish_reason = "stop"
-        if tool_calls:
-            message = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": tool_calls,
-            }
-            finish_reason = "tool_calls"
-        return {
-            "id": f"chatcmpl-{uuid.uuid4().hex}",
-            "object": "chat.completion",
-            "created": created,
-            "model": model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": message,
-                    "finish_reason": finish_reason,
+            variants: dict[str, Any] = {}
+            for key, fmt in formats:
+                cleaned = await asyncio.to_thread(
+                    _strip_watermark_bytes, source["content"], fmt
+                )
+                if not cleaned:
+                    continue
+                variant_item = {**item}
+                storage: dict[str, Any] = {}
+                cache: dict[str, Any] = {}
+                if store_media:
+                    try:
+                        storage = await _upload_media_to_object_storage(variant_item, cleaned)
+                    except Exception as exc:
+                        storage = {"error": str(exc)}
+                if not storage.get("url"):
+                    cache = _cache_downloaded_media(variant_item, cleaned)
+                metadata = {
+                    **variant_item,
+                    "original_url": item.get("url", ""),
+                    "image_format": key,
                 }
-            ],
-            "usage": {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-            },
-        }
+                if storage:
+                    metadata["object_storage"] = storage
+                media_id = store.add_media_output(
+                    request_id=request_id,
+                    account_id=account_id,
+                    kind="image",
+                    title=item.get("title"),
+                    url=storage.get("url") or item.get("url", ""),
+                    thumbnail=item.get("thumbnail"),
+                    local_path=cache.get("path"),
+                    local_content_type=cache.get("content_type"),
+                    local_size=cache.get("size"),
+                    metadata=metadata,
+                )
+                content_url = storage.get("url")
+                if not content_url:
+                    saved = store.get_media_output(media_id)
+                    if saved and saved.token:
+                        content_url = f"/v1/gemini/media/{saved.token}/content"
+                variants[key] = content_url
+
+            if variants:
+                results.append(
+                    {
+                        "title": item.get("title"),
+                        "png_url": variants.get("png"),
+                        "jpg_url": variants.get("jpeg"),
+                        "url": variants.get(output_format) or next(iter(variants.values())),
+                    }
+                )
+        return results
+
+    @app.post("/v1/generate")
+    async def generate(request: GenerateRequest):
+        try:
+            generation_mode = _generation_mode_arg(request.mode) or "image"
+            resolved_model = _resolve_model_arg(request.model)
+            aspect_ratio = _aspect_ratio_arg(request.aspect_ratio)
+            output_format = _output_format_arg(request.output_format)
+        except Exception as exc:
+            raise HTTPException(status_code=_error_status(exc), detail=str(exc)) from exc
+
+        request_id = f"gen-{uuid.uuid4().hex}"
+        prompt = _apply_aspect_ratio(request.prompt, aspect_ratio)
+
+        async def event_stream():
+            yield f"event: status\ndata: {json.dumps({'stage': 'generating', 'request_id': request_id}).decode()}\n\n"
+
+            async def operation(client):
+                kwargs: dict[str, Any] = {
+                    "temporary": request.temporary,
+                    "generation_mode": generation_mode,
+                }
+                if resolved_model:
+                    kwargs["model"] = resolved_model
+                try:
+                    gem_arg = await _resolve_custom_gem_for_generation(
+                        client, request.gem_id
+                    )
+                except ValueError:
+                    raise
+                if gem_arg:
+                    kwargs["gem"] = gem_arg
+                output = await client.generate_content(prompt, **kwargs)
+                _ensure_media_generation_result(output, generation_mode)
+                return output
+
+            try:
+                output = await rotator.run(
+                    operation,
+                    endpoint="/v1/generate",
+                    model=request.model or "gemini",
+                    output_type=f"gemini_{generation_mode}",
+                    job_id=request_id,
+                    require_video_generation=generation_mode == "video",
+                    media_generation_mode=generation_mode,
+                )
+            except Exception as exc:
+                payload = {"stage": "error", "detail": str(exc), "status": _error_status(exc)}
+                yield f"event: error\ndata: {json.dumps(payload).decode()}\n\n"
+                return
+
+            account_id = rotator.status()["current_account_id"]
+            try:
+                images = await _save_generate_media(
+                    request_id=request_id,
+                    account_id=account_id,
+                    output=output,
+                    output_format=output_format,
+                    store_media=request.store_media,
+                )
+            except Exception as exc:
+                payload = {"stage": "error", "detail": str(exc), "status": 502}
+                yield f"event: error\ndata: {json.dumps(payload).decode()}\n\n"
+                return
+
+            if images:
+                store.update_request_log_media_count(request_id, len(images))
+
+            result = {
+                "stage": "done",
+                "request_id": request_id,
+                "account": account_id,
+                "model": request.model or "gemini",
+                "aspect_ratio": aspect_ratio,
+                "output_format": output_format,
+                "text": output.text,
+                "images": images,
+            }
+            yield f"event: result\ndata: {json.dumps(result).decode()}\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return app
 

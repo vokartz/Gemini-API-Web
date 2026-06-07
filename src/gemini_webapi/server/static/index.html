@@ -604,6 +604,7 @@
             <label>İsim<input id="gemName" placeholder="Örn: Kod İnceleme Asistanı"></label>
             <label>Açıklama<input id="gemDescription" placeholder="İsteğe bağlı"></label>
             <label>System Prompt<textarea id="gemPrompt" placeholder="Gem için sistem talimatını buraya yazın"></textarea></label>
+            <label class="row"><input id="gemIsDefault" type="checkbox"> Varsayılan gem yap (seçim yapılmadığında otomatik uygulanır)</label>
             <div class="row button-row">
               <button id="createGemBtn" class="primary">Gem Oluştur</button>
               <button id="updateGemBtn">Seçili Gem'i Güncelle</button>
@@ -668,16 +669,24 @@
                 </select>
               </label>
             </div>
-            <label>En-Boy Oranı (Aspect Ratio)
-              <select id="mediaAspectRatio">
-                <option value="">Varsayılan (Default)</option>
-                <option value="1:1">1:1 (Kare / Square)</option>
-                <option value="16:9">16:9 (Geniş Ekran / Landscape)</option>
-                <option value="9:16">9:16 (Dikey / Portrait)</option>
-                <option value="4:3">4:3 (Standart / Standard)</option>
-                <option value="3:4">3:4 (Dikey Standart / Portrait Standard)</option>
-                <option value="21:9">21:9 (Sinematik / Cinematic)</option>
-              </select>
+            <div class="split">
+              <label>En-Boy Oranı (Aspect Ratio)
+                <select id="mediaAspectRatio">
+                  <option value="">Varsayılan (1:1)</option>
+                  <option value="1:1">1:1 (Kare / Square)</option>
+                  <option value="16:9">16:9 (Geniş Ekran / Landscape)</option>
+                  <option value="9:16">9:16 (Dikey / Portrait)</option>
+                </select>
+              </label>
+              <label>Çıktı Formatı (yalnızca görsel)
+                <select id="mediaOutputFormat">
+                  <option value="png">PNG</option>
+                  <option value="jpg">JPG</option>
+                </select>
+              </label>
+            </div>
+            <label>Gem (yalnızca görsel)
+              <select id="mediaGem"><option value="">Gem Kullanma</option></select>
             </label>
             <label>Üretim Açıklaması
               <textarea id="mediaGeneratePrompt" placeholder="Üretmek istediğiniz görsel, video veya ses içeriğini açıklayın"></textarea>
@@ -810,9 +819,9 @@
         </div>
         <div class="content stack">
           <div class="notice">
-            Bu sunucu, OpenAI uyumlu uç noktalar sunar. Mevcut OpenAI SDK'larını yalnızca
-            <code>base_url</code> ve <code>api_key</code> değerlerini değiştirerek kullanabilirsiniz.
-            API Key oluşturmak için <strong>Sistem Ayarları</strong> sekmesini kullanın.
+            Bu sunucu kendi <code>/v1/generate</code> uç noktası üzerinden görsel üretir.
+            OpenAI uyumlu uç noktalar kaldırılmıştır. API Key oluşturmak için
+            <strong>Sistem Ayarları</strong> sekmesini kullanın.
           </div>
 
           <div class="split">
@@ -829,78 +838,44 @@ gemini-3.1-flash-lite</pre>
           </details>
 
           <details class="raw-json" open>
-            <summary>GET /v1/models — Model listesi</summary>
-            <pre><code class="api-snippet">curl __BASE__/v1/models \
-  -H "Authorization: Bearer $API_KEY"</code></pre>
+            <summary>POST /v1/generate — Görsel üretimi (SSE akışı)</summary>
+            <pre><code class="api-snippet">curl -N __BASE__/v1/generate \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini",
+    "mode": "image",
+    "prompt": "Gün batımında bir dağ manzarası",
+    "aspect_ratio": "16:9",
+    "output_format": "png",
+    "gem_id": null,
+    "store_media": true
+  }'</code></pre>
           </details>
 
           <details class="raw-json" open>
-            <summary>POST /v1/chat/completions — Sohbet (Chat Completions)</summary>
-            <pre><code class="api-snippet">curl __BASE__/v1/chat/completions \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemini",
-    "messages": [{"role": "user", "content": "Merhaba!"}]
-  }'</code></pre>
+            <summary>Akış olayları (text/event-stream)</summary>
+            <pre>event: status
+data: {"stage":"generating","request_id":"gen-..."}
+
+event: result
+data: {"stage":"done","images":[{"png_url":"...","jpg_url":"...","url":"..."}]}</pre>
           </details>
 
           <details class="raw-json">
-            <summary>POST /v1/chat/completions — Akış (stream: true)</summary>
-            <pre><code class="api-snippet">curl -N __BASE__/v1/chat/completions \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemini",
-    "messages": [{"role": "user", "content": "Bir hikaye anlat"}],
-    "stream": true
-  }'</code></pre>
+            <summary>Gem alanları</summary>
+            <pre>gem_id    → Özel gem DB'sindeki gem id'si (Gems sekmesinden)
+            boş bırakılırsa varsayılan gem (⭐) otomatik uygulanır
+aspect_ratio → 1:1, 16:9 veya 9:16
+output_format → png veya jpg (her ikisi de CDN'e yüklenir)</pre>
           </details>
 
           <details class="raw-json">
-            <summary>Python (openai SDK)</summary>
-            <pre><code class="api-snippet">from openai import OpenAI
-
-client = OpenAI(
-    base_url="__BASE__/v1",
-    api_key="$API_KEY",
-)
-
-resp = client.chat.completions.create(
-    model="gemini",
-    messages=[{"role": "user", "content": "Merhaba!"}],
-)
-print(resp.choices[0].message.content)</code></pre>
-          </details>
-
-          <details class="raw-json">
-            <summary>POST /v1/images/generations — Görsel üretimi</summary>
-            <pre><code class="api-snippet">curl __BASE__/v1/images/generations \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemini",
-    "prompt": "Gün batımında bir dağ manzarası",
-    "n": 1
-  }'</code></pre>
-          </details>
-
-          <details class="raw-json">
-            <summary>POST /v1/responses — Responses API</summary>
-            <pre><code class="api-snippet">curl __BASE__/v1/responses \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemini",
-    "input": "Merhaba!"
-  }'</code></pre>
-          </details>
-
-          <details class="raw-json">
-            <summary>POST /v1/files — Dosya yükleme (çok parçalı / multipart)</summary>
-            <pre><code class="api-snippet">curl __BASE__/v1/files \
-  -H "Authorization: Bearer $API_KEY" \
-  -F "file=@belge.pdf"</code></pre>
+            <summary>Diğer uç noktalar (Gemini yerel)</summary>
+            <pre>POST /v1/gemini/generate   → metin / video / ses üretimi
+POST /v1/gemini/stream     → yerel akış
+POST /v1/gemini/files      → dosya yükleme
+GET  /v1/custom-gems       → özel gem listesi</pre>
           </details>
 
           <div class="hint">
@@ -1093,7 +1068,7 @@ print(resp.choices[0].message.content)</code></pre>
       renderMetrics();
     }
     async function refreshGems() {
-      const data = await api("/v1/gemini/gems");
+      const data = await api("/v1/custom-gems");
       state.gems = data.gems || [];
       renderGems();
       renderGemSelect();
@@ -1281,15 +1256,20 @@ print(resp.choices[0].message.content)</code></pre>
     function renderGems() {
       $("gemList").innerHTML = state.gems.length ? state.gems.map(g => `
         <div class="item">
-          <div class="row"><b>${esc(g.name)}</b><span class="pill ${g.predefined ? "" : "current"}">${g.predefined ? "Hazır" : "Özel"}</span></div>
+          <div class="row"><b>${esc(g.name)}</b><span class="pill ${g.is_default ? "current" : ""}">${g.is_default ? "Varsayılan" : "Özel"}</span></div>
           <div class="hint">${esc(g.description || "")}</div>
           <div class="hint">${esc(g.id)}</div>
           <button data-gem-id="${esc(g.id)}">Seç</button>
         </div>
-      `).join("") : `<div class="hint">Henüz Gems önbelleği yok, yenilemek için tıklayın.</div>`;
+      `).join("") : `<div class="hint">Henüz özel gem yok. Aşağıdan oluşturun; tüm hesaplara otomatik uygulanır.</div>`;
     }
     function renderGemSelect() {
-      $("nativeGem").innerHTML = `<option value="">Gem Kullanma</option>` + state.gems.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join("");
+      const defaultGem = state.gems.find(g => g.is_default);
+      const options = state.gems.map(g => `<option value="${esc(g.id)}">${esc(g.name)}${g.is_default ? " ⭐" : ""}</option>`).join("");
+      const placeholder = `<option value="">Gem Kullanma${defaultGem ? ` (varsayılan: ${esc(defaultGem.name)})` : ""}</option>`;
+      $("nativeGem").innerHTML = placeholder + options;
+      const mediaGem = $("mediaGem");
+      if (mediaGem) mediaGem.innerHTML = placeholder + options;
     }
     function renderJobs() {
       $("jobList").innerHTML = state.jobs.length ? state.jobs.map(j => `
@@ -1390,10 +1370,11 @@ print(resp.choices[0].message.content)</code></pre>
       URL.revokeObjectURL(url);
     }
     async function nativePayload() {
-      const gemSelect = $("nativeGem");
-      const gemId = gemSelect.value || null;
-      // Gem id'leri hesaba özeldir; adı da gönderiyoruz ki sunucu çalışan hesabın kendi gem id'sine çözebilsin.
-      const gemName = gemId ? (gemSelect.selectedOptions[0] && gemSelect.selectedOptions[0].text) || null : null;
+      const selectedId = $("nativeGem").value || null;
+      // nativeGem artık özel gem DB id'lerini taşır. Eski /v1/gemini/generate uç noktası gem'i ada göre
+      // çalışan hesaba çözdüğü için, DB'deki kararlı adı gönderiyoruz (id hesaba özeldir, ad değildir).
+      const selectedGem = selectedId ? state.gems.find(g => g.id === selectedId) : null;
+      const gemName = selectedGem ? selectedGem.name : null;
       let prompt = $("nativePrompt").value;
       const ratio = $("nativeAspectRatio").value;
       if (ratio) {
@@ -1402,7 +1383,6 @@ print(resp.choices[0].message.content)</code></pre>
       return {
         prompt: prompt,
         model: $("nativeModel").value,
-        gem_id: gemId,
         gem_name: gemName,
         temporary: $("nativeTemporary").checked,
         deep_research: $("nativeDeepResearch").checked,
@@ -1544,19 +1524,101 @@ print(resp.choices[0].message.content)</code></pre>
         setBtnLoading(btn, false);
       }
     };
+    function renderGenerateImages(targetId, images) {
+      const target = $(targetId);
+      if (!images || !images.length) {
+        target.className = "media-preview-empty";
+        target.textContent = "Üretim sonucu görsel döndürmedi.";
+        return;
+      }
+      target.className = "media-preview";
+      target.innerHTML = images.map((img, i) => {
+        const main = img.url || img.png_url || img.jpg_url;
+        const links = [];
+        if (img.png_url) links.push(`<a href="${esc(img.png_url)}" target="_blank">PNG</a>`);
+        if (img.jpg_url) links.push(`<a href="${esc(img.jpg_url)}" target="_blank">JPG</a>`);
+        return `<div class="item"><img src="${esc(main)}" alt="${esc(img.title || ('görsel ' + (i + 1)))}" style="max-width:100%;border-radius:8px">
+          <div class="row hint">${links.join(" · ")}</div></div>`;
+      }).join("");
+    }
+    // Yeni /v1/generate uç noktası SSE (text/event-stream) döndürür: önce status, sonunda result veya error.
+    async function streamGenerate(payload, { onStatus, onResult, onError }) {
+      const res = await fetch("/v1/generate", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok || !res.body) {
+        let detail = `HTTP ${res.status}`;
+        try { detail = (await res.json()).detail || detail; } catch (e) {}
+        throw new Error(detail);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          let eventName = "message";
+          const dataLines = [];
+          for (const line of block.split("\n")) {
+            if (line.startsWith("event:")) eventName = line.slice(6).trim();
+            else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+          }
+          if (!dataLines.length) continue;
+          let data = {};
+          try { data = JSON.parse(dataLines.join("\n")); } catch (e) { continue; }
+          if (eventName === "status" && onStatus) onStatus(data);
+          else if (eventName === "result" && onResult) onResult(data);
+          else if (eventName === "error" && onError) onError(data);
+        }
+      }
+    }
     $("mediaGenerateBtn").onclick = async event => {
       const btn = event.currentTarget;
       if (!$("mediaGeneratePrompt").value.trim()) return setMsg("Lütfen medya oluşturma açıklaması girin");
+      const kind = $("mediaGenerateKind").value;
       setBtnLoading(btn, true, "Üretiliyor...");
       showJson("mediaGenerateOutput", "Üretiliyor, lütfen bekleyin...");
       showPreviewLoading("mediaGeneratePreview", "Medya üretiliyor, lütfen bekleyin...");
       try {
-        const data = await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await mediaPayload()) });
-        renderGeneratedPreview("mediaGeneratePreview", data);
-        showJson("mediaGenerateOutput", data);
-        await refreshMedia();
-        renderRequestMediaPreview("mediaGeneratePreview", data.request_id);
-        await refreshLogs();
+        if (kind === "image") {
+          // Görsel üretimi yeni SSE uç noktasını kullanır: filigransız PNG+JPG, CDN bağlantısı, anlık durum.
+          const ratio = $("mediaAspectRatio").value || null;
+          const payload = {
+            prompt: $("mediaGeneratePrompt").value.trim(),
+            model: $("mediaGenerateModel").value,
+            mode: "image",
+            aspect_ratio: ratio,
+            output_format: $("mediaOutputFormat").value,
+            gem_id: $("mediaGem").value || null,
+            temporary: true,
+            store_media: true,
+          };
+          let streamError = null;
+          await streamGenerate(payload, {
+            onStatus: () => showPreviewLoading("mediaGeneratePreview", "Üretiliyor..."),
+            onResult: data => {
+              renderGenerateImages("mediaGeneratePreview", data.images);
+              showJson("mediaGenerateOutput", data);
+            },
+            onError: data => { streamError = data.detail || "Üretim hatası"; },
+          });
+          if (streamError) throw new Error(streamError);
+          await refreshMedia();
+          await refreshLogs();
+        } else {
+          const data = await api("/v1/gemini/generate", { method: "POST", body: JSON.stringify(await mediaPayload()) });
+          renderGeneratedPreview("mediaGeneratePreview", data);
+          showJson("mediaGenerateOutput", data);
+          await refreshMedia();
+          renderRequestMediaPreview("mediaGeneratePreview", data.request_id);
+          await refreshLogs();
+        }
       } catch (e) {
         renderGeneratedPreview("mediaGeneratePreview", null);
         showJson("mediaGenerateOutput", e.message);
@@ -1619,21 +1681,30 @@ print(resp.choices[0].message.content)</code></pre>
       $("gemName").value = gem.name || "";
       $("gemDescription").value = gem.description || "";
       $("gemPrompt").value = gem.prompt || "";
+      $("gemIsDefault").checked = Boolean(gem.is_default);
     };
+    function gemFormPayload() {
+      return {
+        name: $("gemName").value,
+        description: $("gemDescription").value,
+        prompt: $("gemPrompt").value,
+        is_default: $("gemIsDefault").checked,
+      };
+    }
     $("createGemBtn").onclick = async () => {
-      await api("/v1/gemini/gems", { method: "POST", body: JSON.stringify({ name: $("gemName").value, description: $("gemDescription").value, prompt: $("gemPrompt").value }) });
+      await api("/v1/custom-gems", { method: "POST", body: JSON.stringify(gemFormPayload()) });
       await refreshGems();
     };
     $("updateGemBtn").onclick = async () => {
       const id = $("selectedGemId").value;
       if (!id) return setMsg("Lütfen önce bir Gem seçin");
-      await api(`/v1/gemini/gems/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name: $("gemName").value, description: $("gemDescription").value, prompt: $("gemPrompt").value }) });
+      await api(`/v1/custom-gems/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(gemFormPayload()) });
       await refreshGems();
     };
     $("deleteGemBtn").onclick = async () => {
       const id = $("selectedGemId").value;
       if (!id || !confirm(`Gem ${id} silinsin mi?`)) return;
-      await api(`/v1/gemini/gems/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await api(`/v1/custom-gems/${encodeURIComponent(id)}`, { method: "DELETE" });
       $("selectedGemId").value = "";
       await refreshGems();
     };
