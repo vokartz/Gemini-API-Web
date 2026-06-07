@@ -13,194 +13,229 @@
   <main>
     <div class="page-title">
       <h1>Hesaplar & Kota</h1>
-      <p>Çok hesaplı cookie havuzu, kullanım kotası, doğrulama ve medya soğuma durumu.</p>
+      <p>Çerez havuzunu yönet, kullanım kotalarını ve medya soğuma durumlarını izle.</p>
     </div>
 
-    <div class="grid-3">
+    <div class="grid-4" id="metrics">
       <div class="metric"><span class="value" id="mActive">-</span><span class="label">Aktif hesap</span></div>
-      <div class="metric"><span class="value" id="mCurrent">-</span><span class="label">Mevcut hesap #</span></div>
-      <div class="metric"><span class="value" id="mRequests">-</span><span class="label">Toplam istek (kayıt)</span></div>
+      <div class="metric"><span class="value" id="mCurrent">-</span><span class="label">Mevcut hesap</span></div>
+      <div class="metric"><span class="value" id="mExpired">-</span><span class="label">Yetki gerekli</span></div>
+      <div class="metric"><span class="value" id="mCooldown">-</span><span class="label">Soğumadaki görsel</span></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Rotasyon Ayarları</h2>
-        <button id="saveSettingsBtn" class="small primary">Kaydet</button>
-      </div>
-      <div class="panel-body split">
-        <label>Kaç çağrıda hesap değiştir (kota eşiği)
-          <input id="switchOnUses" type="number" min="0">
-        </label>
-        <label>Kaç hatada hesap değiştir
-          <input id="failureThreshold" type="number" min="0">
-        </label>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Hesap Ekle (manuel cookie)</h2>
-      </div>
-      <div class="panel-body stack">
-        <div class="notice">Tarayıcınızdan <code>__Secure-1PSID</code> ve <code>__Secure-1PSIDTS</code> çerezlerini kopyalayıp aşağıya yapıştırın. İsim isteğe bağlıdır.</div>
-        <label>İsim (isteğe bağlı)<input id="accName" placeholder="örn: hesap-1"></label>
-        <label>__Secure-1PSID<input id="accPsid" placeholder="g.a000..."></label>
-        <label>__Secure-1PSIDTS<input id="accPsidts" placeholder="sidts-..."></label>
-        <button id="addAccountBtn" class="primary">Hesabı Ekle ve Doğrula</button>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Hesap Havuzu</h2>
-        <div class="row">
-          <button id="validateAllBtn" class="small">Tümünü Doğrula</button>
-          <button id="refreshBtn" class="small">Yenile</button>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h2>Hesap Havuzu</h2>
+          <div class="row">
+            <button class="small" id="validateAllBtn">Tümünü Doğrula</button>
+            <button class="small primary" id="addAccountBtn">+ Hesap Ekle</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="accountList" class="list"></div>
         </div>
       </div>
-      <div class="panel-body">
-        <div id="accountList" class="list"></div>
+
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><h2>Rotasyon Ayarları</h2></div>
+          <div class="card-body stack">
+            <label>Kaç çağrı sonra hesap değişsin (kota eşiği)
+              <input id="switchOnUses" type="number" min="0">
+            </label>
+            <label>Kaç ardışık hata sonra değişsin
+              <input id="failureThreshold" type="number" min="0">
+            </label>
+            <button class="primary" id="saveSettingsBtn">Ayarları Kaydet</button>
+            <div class="hint">Kullanım sayacı bu eşiğe ulaşınca otomatik sonraki hesaba geçilir; her hesabın kotasını aşağıdaki çubuktan görebilirsin.</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>İçe / Dışa Aktar</h2></div>
+          <div class="card-body stack">
+            <div class="row">
+              <button id="importBtn">accounts.json'dan içe aktar</button>
+              <button id="exportBtn">Dışa aktar (indir)</button>
+            </div>
+            <div class="hint">İçe aktarma, sunucudaki <code>data/accounts.json</code> dosyasını okur.</div>
+          </div>
+        </div>
       </div>
     </div>
   </main>
 
+  <div class="modal-backdrop" id="addBackdrop">
+    <div class="modal">
+      <div class="modal-head"><span>Hesap Ekle</span><button data-close="addBackdrop">✕</button></div>
+      <div class="modal-body">
+        <label>İsim (opsiyonel)<input id="newName" placeholder="örn: hesap-1"></label>
+        <label>__Secure-1PSID *<input id="newPsid" placeholder="COOKIE değeri"></label>
+        <label>__Secure-1PSIDTS<input id="newPsidts" placeholder="COOKIE değeri (opsiyonel)"></label>
+        <label>Tam cookies JSON (opsiyonel)
+          <textarea id="newCookies" placeholder='{"__Secure-1PSID":"...","__Secure-1PSIDTS":"..."}'></textarea>
+        </label>
+        <label class="inline"><input type="checkbox" id="newEnabled" checked> Etkin</label>
+        <div class="alert info">Yalnızca __Secure-1PSID zorunludur. Cookie'leri tarayıcıdan kopyalayabilirsiniz.</div>
+      </div>
+      <div class="modal-foot">
+        <button data-close="addBackdrop">Vazgeç</button>
+        <button class="primary" id="saveAccountBtn">Ekle ve Doğrula</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
   <script>
-    let switchOnUses = 40;
+    let statusData = null;
 
     async function init() {
-      $("addAccountBtn").onclick = onAddAccount;
-      $("refreshBtn").onclick = () => refresh().catch((e) => toast(e.message, true));
-      $("validateAllBtn").onclick = onValidateAll;
-      $("saveSettingsBtn").onclick = onSaveSettings;
-      $("accountList").addEventListener("click", onListClick);
+      bindModal();
+      $("addAccountBtn").onclick = () => openModal("addBackdrop");
+      $("saveAccountBtn").onclick = addAccount;
+      $("validateAllBtn").onclick = () => act(() => api("/v1/accounts/validate-all", { method: "POST" }), "Tüm hesaplar doğrulandı");
+      $("saveSettingsBtn").onclick = saveSettings;
+      $("importBtn").onclick = () => act(() => api("/v1/accounts/import", { method: "POST" }), "İçe aktarıldı");
+      $("exportBtn").onclick = exportAccounts;
       await refresh();
     }
 
+    function bindModal() {
+      document.querySelectorAll("[data-close]").forEach((b) => b.onclick = () => closeModal(b.dataset.close));
+      document.querySelectorAll(".modal-backdrop").forEach((bd) => bd.addEventListener("click", (e) => { if (e.target === bd) bd.classList.remove("open"); }));
+    }
+    function openModal(id) { $(id).classList.add("open"); }
+    function closeModal(id) { $(id).classList.remove("open"); }
+
     async function refresh() {
-      const status = await api("/v1/status");
-      switchOnUses = Number(status.switch_on_uses || 0);
-      $("switchOnUses").value = status.switch_on_uses;
-      $("failureThreshold").value = status.failure_threshold;
-      $("mCurrent").textContent = status.current_account_id ?? "-";
-      $("mRequests").textContent = status.request_log_count ?? "-";
-      const accounts = status.accounts || [];
-      $("mActive").textContent = accounts.filter((a) => a.enabled && !a.expired).length;
-      renderAccounts(accounts);
+      statusData = await api("/v1/status");
+      const settings = await api("/v1/settings");
+      $("switchOnUses").value = settings.switch_on_uses;
+      $("failureThreshold").value = settings.failure_threshold;
+      renderMetrics();
+      renderAccounts();
     }
 
-    function quotaCell(a) {
-      const limit = switchOnUses > 0 ? switchOnUses : 0;
-      const used = Number(a.usage_count || 0);
-      const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-      const tone = !limit ? "" : pct >= 90 ? "bad" : pct >= 70 ? "warn" : "";
-      const label = limit ? `${used} / ${limit} çağrı (sonra rotasyon)` : `${used} çağrı (limit yok)`;
-      return `
-        <div class="stack" style="gap:5px">
-          <div class="row" style="justify-content:space-between">
-            <span class="hint">Kota kullanımı</span><span class="hint">${esc(label)}</span>
-          </div>
-          <div class="quota-bar ${tone}"><span style="width:${limit ? pct : 0}%"></span></div>
-        </div>`;
+    function renderMetrics() {
+      const accounts = statusData.accounts || [];
+      const active = accounts.filter((a) => a.enabled && !a.expired);
+      const cooldownImg = active.filter((a) => a.media_cooldowns && a.media_cooldowns.image).length;
+      $("mActive").textContent = active.length;
+      $("mCurrent").textContent = statusData.current_account_id ?? "-";
+      $("mExpired").textContent = accounts.filter((a) => a.expired).length;
+      $("mCooldown").textContent = cooldownImg;
+      $("mCooldown").className = `value ${cooldownImg ? "bad" : "ok"}`;
+    }
+
+    function quotaBar(a) {
+      const limit = Number(statusData.switch_on_uses || 0);
+      if (!limit) return "";
+      const used = Math.min(a.usage_count, limit);
+      const pct = Math.round((used / limit) * 100);
+      const cls = pct >= 90 ? "bad" : pct >= 70 ? "warn" : "";
+      return `<div class="quota">
+        <div class="row between"><span class="hint">Kullanım kotası</span><span class="hint">${a.usage_count} / ${limit}</span></div>
+        <div class="quota-bar ${cls}"><span style="width:${pct}%"></span></div>
+      </div>`;
     }
 
     function cooldownText(a) {
       const labels = { image: "Görsel", video: "Video", audio: "Ses" };
       const entries = Object.entries(a.media_cooldowns || {});
-      if (!entries.length) return `<span class="pill ok">Medya hazır</span>`;
-      return entries.map(([kind, cd]) =>
-        `<span class="pill warn" title="${esc(cd.reason || "")}">${esc(labels[kind] || kind)}: ${esc(fmtDuration(cd.remaining_seconds))}</span>`
-      ).join(" ");
+      if (!entries.length) return "";
+      return `<div class="row" style="gap:6px">` + entries.map(([k, c]) =>
+        `<span class="pill warn">${labels[k] || k}: ${fmtDuration(c.remaining_seconds)}</span>`).join("") + `</div>`;
     }
 
-    function renderAccounts(accounts) {
+    function renderAccounts() {
+      const accounts = statusData.accounts || [];
       if (!accounts.length) {
-        $("accountList").innerHTML = `<div class="preview-empty">Henüz hesap yok. Yukarıdan cookie ile ekleyin.</div>`;
+        $("accountList").innerHTML = `<div class="preview-empty">Henüz hesap yok. Sağ üstten ekleyin.</div>`;
         return;
       }
       $("accountList").innerHTML = accounts.map((a) => {
-        const statusPill = a.expired
-          ? `<span class="pill bad">Süresi doldu</span>`
-          : a.enabled ? `<span class="pill ok">Aktif</span>` : `<span class="pill">Devre dışı</span>`;
-        const currentPill = a.current ? `<span class="pill accent">Şu an kullanımda</span>` : "";
-        return `
-          <div class="item">
+        const statusPill = a.expired ? `<span class="pill bad">Yetki gerekli</span>`
+          : !a.enabled ? `<span class="pill">Devre dışı</span>`
+          : `<span class="pill ok">Aktif</span>`;
+        const current = a.current ? `<span class="pill primary">Mevcut</span>` : "";
+        return `<div class="item stack">
+          <div class="row between">
+            <div class="row" style="gap:8px"><b>#${a.id} ${esc(a.name || "İsimsiz")}</b>${statusPill}${current}</div>
             <div class="row">
-              <div class="row" style="gap:8px">
-                <b>#${a.id} ${esc(a.name || "İsimsiz")}</b>${statusPill}${currentPill}
-              </div>
-              <div class="row">${cooldownText(a)}</div>
-            </div>
-            ${quotaCell(a)}
-            <div class="hint">${a.usage_count} çağrı · ${a.failure_count} hata${a.last_used_at ? ` · son: ${esc(fmt(a.last_used_at))}` : ""}${a.validation_status ? ` · doğrulama: ${esc(a.validation_status)}` : ""}</div>
-            ${a.validation_message ? `<div class="hint faint">${esc(a.validation_message)}</div>` : ""}
-            <div class="row">
-              <button class="small" data-act="switch" data-id="${a.id}" ${a.current || !a.enabled || a.expired ? "disabled" : ""}>Bu hesaba geç</button>
+              ${a.current ? "" : `<button class="small" data-act="switch" data-id="${a.id}">Bu hesaba geç</button>`}
               <button class="small" data-act="validate" data-id="${a.id}">Doğrula</button>
-              <button class="small" data-act="toggle" data-id="${a.id}" data-enabled="${a.enabled}">${a.enabled ? "Devre dışı" : "Etkinleştir"}</button>
-              ${Object.keys(a.media_cooldowns || {}).length ? `<button class="small" data-act="clear-cd" data-id="${a.id}">Soğumayı temizle</button>` : ""}
+              <button class="small" data-act="toggle" data-id="${a.id}" data-enabled="${a.enabled ? 1 : 0}">${a.enabled ? "Devre dışı bırak" : "Etkinleştir"}</button>
               <button class="small danger" data-act="delete" data-id="${a.id}">Sil</button>
             </div>
-          </div>`;
+          </div>
+          ${quotaBar(a)}
+          <div class="hint">${a.usage_count} çağrı · ${a.failure_count} hata${a.last_used_at ? ` · son: ${esc(fmt(a.last_used_at))}` : ""}${a.validation_status ? ` · ${esc(a.validation_status)}` : ""}</div>
+          ${cooldownText(a)}
+          ${a.validation_message ? `<div class="hint faint">${esc(a.validation_message)}</div>` : ""}
+        </div>`;
       }).join("");
+
+      $("accountList").querySelectorAll("[data-act]").forEach((b) => {
+        b.onclick = () => handleAction(b.dataset.act, Number(b.dataset.id), b.dataset);
+      });
     }
 
-    async function onAddAccount(event) {
-      const btn = event.currentTarget;
-      const psid = $("accPsid").value.trim();
-      if (!psid) return toast("__Secure-1PSID zorunlu", true);
-      btn.disabled = true;
-      try {
-        await api("/v1/accounts", {
-          method: "POST",
-          body: JSON.stringify({
-            name: $("accName").value.trim() || null,
-            "__Secure-1PSID": psid,
-            "__Secure-1PSIDTS": $("accPsidts").value.trim() || null,
-            enabled: true,
-          }),
-        });
-        $("accName").value = $("accPsid").value = $("accPsidts").value = "";
-        toast("Hesap eklendi");
-        await refresh();
-      } catch (e) { toast(e.message, true); }
-      finally { btn.disabled = false; }
+    async function handleAction(action, id, dataset) {
+      if (action === "switch") return act(() => api("/v1/accounts/switch", { method: "POST", body: JSON.stringify({ account_id: id }) }), "Hesap değiştirildi");
+      if (action === "validate") return act(() => api(`/v1/accounts/${id}/validate`, { method: "POST" }), "Doğrulandı");
+      if (action === "toggle") return act(() => api(`/v1/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: dataset.enabled !== "1" }) }), "Güncellendi");
+      if (action === "delete") {
+        if (!(await confirmDialog(`#${id} hesabı silinsin mi?`))) return;
+        return act(() => api(`/v1/accounts/${id}`, { method: "DELETE" }), "Silindi");
+      }
     }
 
-    async function onValidateAll() {
-      try { await api("/v1/accounts/validate-all", { method: "POST" }); toast("Doğrulama tamam"); await refresh(); }
+    async function act(fn, okMsg) {
+      try { await fn(); await refresh(); toast(okMsg, false); }
       catch (e) { toast(e.message, true); }
     }
 
-    async function onSaveSettings() {
+    async function addAccount() {
+      const psid = $("newPsid").value.trim();
+      if (!psid) return toast("__Secure-1PSID zorunlu", true);
+      let cookies = {};
+      const raw = $("newCookies").value.trim();
+      if (raw) { try { cookies = JSON.parse(raw); } catch (e) { return toast("Cookies JSON geçersiz", true); } }
+      const body = {
+        name: $("newName").value.trim() || null,
+        "__Secure-1PSID": psid,
+        "__Secure-1PSIDTS": $("newPsidts").value.trim() || null,
+        cookies,
+        enabled: $("newEnabled").checked,
+      };
       try {
-        await api("/v1/settings", {
-          method: "PATCH",
-          body: JSON.stringify({
-            switch_on_uses: Number($("switchOnUses").value),
-            failure_threshold: Number($("failureThreshold").value),
-          }),
-        });
-        toast("Ayarlar kaydedildi");
+        await api("/v1/accounts", { method: "POST", body: JSON.stringify(body) });
+        closeModal("addBackdrop");
+        ["newName", "newPsid", "newPsidts", "newCookies"].forEach((id) => $(id).value = "");
         await refresh();
+        toast("Hesap eklendi", false);
       } catch (e) { toast(e.message, true); }
     }
 
-    async function onListClick(event) {
-      const btn = event.target.closest("[data-act]");
-      if (!btn) return;
-      const id = btn.dataset.id;
-      const act = btn.dataset.act;
+    async function saveSettings() {
       try {
-        if (act === "switch") await api("/v1/accounts/switch", { method: "POST", body: JSON.stringify({ account_id: Number(id) }) });
-        else if (act === "validate") await api(`/v1/accounts/${id}/validate`, { method: "POST" });
-        else if (act === "toggle") await api(`/v1/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: btn.dataset.enabled !== "true" }) });
-        else if (act === "clear-cd") await api(`/v1/accounts/${id}/media-cooldowns/clear`, { method: "POST", body: JSON.stringify({ kind: null }) });
-        else if (act === "delete") {
-          if (!confirm(`#${id} hesabı silinsin mi?`)) return;
-          await api(`/v1/accounts/${id}`, { method: "DELETE" });
-        }
+        await api("/v1/settings", { method: "PATCH", body: JSON.stringify({
+          switch_on_uses: Number($("switchOnUses").value),
+          failure_threshold: Number($("failureThreshold").value),
+        }) });
         await refresh();
+        toast("Ayarlar kaydedildi", false);
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function exportAccounts() {
+      try {
+        const data = await api("/v1/accounts/export");
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "accounts.json"; a.click();
+        URL.revokeObjectURL(url);
       } catch (e) { toast(e.message, true); }
     }
 

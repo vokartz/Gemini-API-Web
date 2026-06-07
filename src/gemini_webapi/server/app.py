@@ -82,6 +82,7 @@ class GenerateRequest(BaseModel):
     aspect_ratio: str | None = None
     output_format: str = "png"
     store_media: bool = True
+    file_ids: list[str] = Field(default_factory=list)
 
 
 class GeminiGenerateRequest(BaseModel):
@@ -2219,6 +2220,9 @@ def create_app(config: ServerConfig | None = None):
                     raise
                 if gem_arg:
                     kwargs["gem"] = gem_arg
+                files = _file_paths(request.file_ids)
+                if files:
+                    kwargs["files"] = files
                 output = await client.generate_content(prompt, **kwargs)
                 _ensure_media_generation_result(output, generation_mode)
                 return output

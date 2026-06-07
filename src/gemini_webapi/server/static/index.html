@@ -13,16 +13,27 @@
   <main>
     <div class="page-title">
       <h1>Görsel Üretimi</h1>
-      <p>Gemini ile filigransız görsel üret; PNG + JPG olarak CDN'e yüklenir, sonuç anlık akışla gelir.</p>
+      <p>Filigransız görsel üret veya referans görsel yükleyip düzenle. PNG + JPG olarak CDN'e yüklenir.</p>
     </div>
 
     <div class="grid-2">
-      <div class="panel">
-        <div class="panel-head"><h2>Üretim</h2></div>
-        <div class="panel-body stack">
+      <!-- Sol: form -->
+      <div class="card">
+        <div class="card-head"><h2>Üretim</h2><span class="pill primary" id="modeBadge">Görsel</span></div>
+        <div class="card-body stack">
           <label>Açıklama (prompt)
-            <textarea id="prompt" placeholder="Üretmek istediğiniz görseli açıklayın…"></textarea>
+            <textarea id="prompt" placeholder="Üretmek veya düzenlemek istediğiniz görseli açıklayın…"></textarea>
           </label>
+
+          <div>
+            <div class="row between" style="margin-bottom:6px">
+              <span class="hint">Referans görseller (düzenleme için)</span>
+              <button class="small ghost" id="addRefBtn" type="button">+ Görsel ekle</button>
+            </div>
+            <input id="refInput" type="file" accept="image/*" multiple style="display:none">
+            <div id="refChips" class="chips"></div>
+          </div>
+
           <div class="split">
             <label>Model
               <select id="model">
@@ -44,7 +55,7 @@
           <div class="split">
             <label>Çıktı formatı
               <select id="outputFormat">
-                <option value="png">PNG</option>
+                <option value="png">PNG (kayıpsız)</option>
                 <option value="jpg">JPG</option>
               </select>
             </label>
@@ -52,25 +63,32 @@
               <select id="gem"><option value="">Gem kullanma</option></select>
             </label>
           </div>
-          <button id="generateBtn" class="primary">Görsel Üret</button>
-          <div class="hint" id="genStatus"></div>
+          <button id="generateBtn" class="primary block">Görsel Üret</button>
         </div>
       </div>
 
-      <div class="panel">
-        <div class="panel-head"><h2>Sonuç</h2></div>
-        <div class="panel-body">
+      <!-- Sağ: sonuç -->
+      <div class="card">
+        <div class="card-head">
+          <h2>Sonuç</h2>
+          <span class="pill" id="timerPill" style="display:none"><span class="spinner"></span> <span id="timerText">0.0s</span></span>
+        </div>
+        <div class="card-body">
           <div id="preview" class="preview-empty">Üretilen görsel burada görünecek.</div>
+          <details class="stack" id="rawWrap" style="margin-top:12px;display:none">
+            <summary>Ham yanıt (JSON)</summary>
+            <pre id="rawOutput"></pre>
+          </details>
         </div>
       </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Son Üretilenler</h2>
+    <div class="card">
+      <div class="card-head">
+        <h2>Son Üretilen Görseller</h2>
         <button id="refreshMediaBtn" class="small">Yenile</button>
       </div>
-      <div class="panel-body">
+      <div class="card-body">
         <div id="mediaList" class="preview"></div>
       </div>
     </div>
@@ -78,11 +96,15 @@
 
   <script src="/static/app.js"></script>
   <script>
+    const refFiles = []; // {id, filename, dataUrl}
+    let timerHandle = null;
+
     async function init() {
-      await loadGemOptions();
-      await refreshMedia();
+      await Promise.all([loadGemOptions(), refreshMedia()]);
       $("generateBtn").onclick = onGenerate;
       $("refreshMediaBtn").onclick = () => refreshMedia().catch((e) => toast(e.message, true));
+      $("addRefBtn").onclick = () => $("refInput").click();
+      $("refInput").onchange = onPickRefs;
     }
 
     async function loadGemOptions() {
@@ -92,27 +114,64 @@
       $("gem").innerHTML = `<option value="">Gem kullanma${def ? ` (varsayılan: ${esc(def.name)})` : ""}</option>` + opts;
     }
 
-    function renderImages(target, images) {
+    async function onPickRefs(e) {
+      const files = [...e.target.files];
+      e.target.value = "";
+      for (const file of files) {
+        const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(file); });
+        const placeholder = { id: null, filename: file.name, dataUrl, uploading: true };
+        refFiles.push(placeholder);
+        renderRefChips();
+        try {
+          const rec = await uploadFile(file);
+          placeholder.id = rec.id;
+          placeholder.uploading = false;
+        } catch (err) {
+          const idx = refFiles.indexOf(placeholder);
+          if (idx >= 0) refFiles.splice(idx, 1);
+          toast(err.message, true);
+        }
+        renderRefChips();
+      }
+    }
+
+    function renderRefChips() {
+      $("refChips").innerHTML = refFiles.map((f, i) => `
+        <span class="chip">
+          <img src="${esc(f.dataUrl)}" alt="">
+          ${f.uploading ? '<span class="spinner"></span>' : esc(f.filename)}
+          <button data-ref="${i}" title="Kaldır">✕</button>
+        </span>`).join("");
+      $("refChips").querySelectorAll("[data-ref]").forEach((b) => {
+        b.onclick = () => { refFiles.splice(Number(b.dataset.ref), 1); renderRefChips(); };
+      });
+    }
+
+    function renderImages(target, images, { zoomable = true } = {}) {
       const el = $(target);
       if (!images || !images.length) {
         el.className = "preview-empty";
-        el.textContent = "Üretim sonucu görsel döndürmedi.";
+        el.textContent = "Görsel yok.";
         return;
       }
       el.className = "preview";
       el.innerHTML = images.map((img, i) => {
         const main = img.url || img.png_url || img.jpg_url;
         const links = [];
-        if (img.png_url) links.push(`<a href="${esc(img.png_url)}" target="_blank">PNG</a>`);
-        if (img.jpg_url) links.push(`<a href="${esc(img.jpg_url)}" target="_blank">JPG</a>`);
-        return `<div class="item">
-          <img src="${esc(main)}" alt="görsel ${i + 1}">
-          <div class="row hint" style="justify-content:center">${links.join(" · ")}</div>
+        if (img.png_url) links.push(`<a href="${esc(img.png_url)}" target="_blank" download>PNG</a>`);
+        if (img.jpg_url && img.jpg_url !== img.png_url) links.push(`<a href="${esc(img.jpg_url)}" target="_blank" download>JPG</a>`);
+        return `<div class="thumb" data-zoom="${esc(main)}" data-title="${esc(img.title || ('Görsel ' + (i + 1)))}">
+          <img src="${esc(main)}" alt="görsel ${i + 1}" loading="lazy">
+          <div class="actions">${links.join("")}</div>
         </div>`;
       }).join("");
+      if (zoomable) {
+        el.querySelectorAll("[data-zoom]").forEach((t) => {
+          t.onclick = (e) => { if (e.target.closest("a")) return; openZoom(t.dataset.zoom, t.dataset.title); };
+        });
+      }
     }
 
-    // /v1/generate SSE akışını çözer.
     async function streamGenerate(payload, handlers) {
       const res = await fetch("/v1/generate", {
         method: "POST",
@@ -148,14 +207,32 @@
       }
     }
 
+    function startTimer() {
+      const t0 = performance.now();
+      $("timerPill").style.display = "";
+      $("timerText").textContent = "0.0s";
+      timerHandle = setInterval(() => {
+        $("timerText").textContent = ((performance.now() - t0) / 1000).toFixed(1) + "s";
+      }, 100);
+      return () => {
+        clearInterval(timerHandle); timerHandle = null;
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+        $("timerText").textContent = elapsed + "s";
+        return elapsed;
+      };
+    }
+
     async function onGenerate(event) {
       const btn = event.currentTarget;
       const prompt = $("prompt").value.trim();
       if (!prompt) return toast("Lütfen bir açıklama girin", true);
+      if (refFiles.some((f) => f.uploading)) return toast("Referans görseller hâlâ yükleniyor", true);
       btn.disabled = true;
-      $("genStatus").innerHTML = `<span class="spinner"></span> Üretiliyor…`;
+      const stopTimer = startTimer();
       $("preview").className = "preview-empty";
-      $("preview").innerHTML = `<span class="spinner"></span>`;
+      $("preview").innerHTML = `<span class="spinner lg"></span><div>Üretiliyor…</div>`;
+      $("rawWrap").style.display = "none";
+
       const payload = {
         prompt,
         model: $("model").value,
@@ -163,22 +240,30 @@
         aspect_ratio: $("aspectRatio").value || null,
         output_format: $("outputFormat").value,
         gem_id: $("gem").value || null,
+        file_ids: refFiles.filter((f) => f.id).map((f) => f.id),
         temporary: true,
         store_media: true,
       };
       let streamError = null;
       try {
         await streamGenerate(payload, {
-          status: () => { $("genStatus").innerHTML = `<span class="spinner"></span> Görsel oluşturuluyor…`; },
-          result: (data) => { renderImages("preview", data.images); $("genStatus").textContent = "Tamamlandı."; },
+          status: () => { $("preview").innerHTML = `<span class="spinner lg"></span><div>Görsel oluşturuluyor…</div>`; },
+          result: (data) => {
+            renderImages("preview", data.images);
+            $("rawOutput").textContent = JSON.stringify(data, null, 2);
+            $("rawWrap").style.display = "";
+          },
           error: (data) => { streamError = data.detail || "Üretim hatası"; },
         });
         if (streamError) throw new Error(streamError);
+        const elapsed = stopTimer();
+        toast(`Tamamlandı · ${elapsed}s`, false);
         await refreshMedia();
       } catch (e) {
+        stopTimer();
+        $("timerPill").style.display = "none";
         $("preview").className = "preview-empty";
         $("preview").textContent = "Üretim başarısız.";
-        $("genStatus").textContent = "";
         toast(e.message, true);
       } finally {
         btn.disabled = false;
@@ -187,15 +272,7 @@
 
     async function refreshMedia() {
       const data = await api("/v1/gemini/media?kind=image&limit=24");
-      const items = (data.media || []).map((m) => ({
-        url: m.content_url || m.url,
-        png_url: m.content_url || m.url,
-      }));
-      if (!items.length) {
-        $("mediaList").className = "preview-empty";
-        $("mediaList").textContent = "Henüz üretilmiş görsel yok.";
-        return;
-      }
+      const items = (data.media || []).map((m) => ({ url: m.content_url || m.url, png_url: m.content_url || m.url, title: m.title }));
       renderImages("mediaList", items);
     }
 

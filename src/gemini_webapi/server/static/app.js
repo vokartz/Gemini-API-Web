@@ -162,3 +162,74 @@ async function loadGems() {
   const data = await api("/v1/custom-gems");
   return data.gems || [];
 }
+
+// ---------- Image zoom modal (tüm sayfalar) ----------
+function ensureZoomModal() {
+  let bd = $("zoomBackdrop");
+  if (bd) return bd;
+  bd = document.createElement("div");
+  bd.id = "zoomBackdrop";
+  bd.className = "modal-backdrop";
+  bd.innerHTML = `
+    <div class="modal xl">
+      <div class="modal-head"><span id="zoomTitle">Görsel</span><button id="zoomClose">Kapat ✕</button></div>
+      <div class="modal-img"><img id="zoomImg" alt="görsel"></div>
+      <div class="modal-foot">
+        <a id="zoomDownload" class="btn" download target="_blank">İndir</a>
+        <button class="primary" id="zoomCloseBtn">Tamam</button>
+      </div>
+    </div>`;
+  document.body.appendChild(bd);
+  const close = () => bd.classList.remove("open");
+  bd.addEventListener("click", (e) => { if (e.target === bd) close(); });
+  $("zoomClose").onclick = close;
+  $("zoomCloseBtn").onclick = close;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  return bd;
+}
+function openZoom(url, title) {
+  const bd = ensureZoomModal();
+  $("zoomImg").src = url;
+  $("zoomTitle").textContent = title || "Görsel";
+  $("zoomDownload").href = url;
+  bd.classList.add("open");
+}
+
+// ---------- Generic confirm modal ----------
+function confirmDialog(message, { title = "Onay", danger = true } = {}) {
+  return new Promise((resolve) => {
+    const bd = document.createElement("div");
+    bd.className = "modal-backdrop open";
+    bd.innerHTML = `
+      <div class="modal">
+        <div class="modal-head">${esc(title)}</div>
+        <div class="modal-body"><div>${esc(message)}</div></div>
+        <div class="modal-foot">
+          <button data-act="no">Vazgeç</button>
+          <button class="${danger ? "danger" : "primary"}" data-act="yes">Onayla</button>
+        </div>
+      </div>`;
+    document.body.appendChild(bd);
+    const done = (v) => { bd.remove(); resolve(v); };
+    bd.addEventListener("click", (e) => { if (e.target === bd) done(false); });
+    bd.querySelector('[data-act="no"]').onclick = () => done(false);
+    bd.querySelector('[data-act="yes"]').onclick = () => done(true);
+  });
+}
+
+// ---------- File upload (referans görseller) ----------
+async function uploadFile(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/v1/gemini/files", { method: "POST", headers: authHeaders(), body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `Yükleme hatası (${res.status})`);
+  return data.file;
+}
+
+function fmtBytes(n) {
+  const v = Number(n || 0);
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  return `${(v / 1024 / 1024).toFixed(1)} MB`;
+}

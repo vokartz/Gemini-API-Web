@@ -301,7 +301,7 @@ def remove_watermark(image, verbose=False, allow_fallback=False):
     return Image.fromarray(img_array.astype(np.uint8), 'RGB')
 
 
-def remove_watermark_bytes(image_bytes, output_format='PNG', quality=95):
+def remove_watermark_bytes(image_bytes, output_format='PNG', quality=95, allow_fallback=False):
     """
     Remove watermark and return as bytes.
 
@@ -309,11 +309,14 @@ def remove_watermark_bytes(image_bytes, output_format='PNG', quality=95):
         image_bytes: Input image as bytes
         output_format: Output format (PNG, JPEG, etc.)
         quality: JPEG quality (1-100)
+        allow_fallback: Blindly reverse-blend the bottom-right corner when template
+            matching fails. Off by default — forcing it corrupts (blackens) the corner
+            of images that don't actually carry the Gemini watermark.
 
     Returns:
         Processed image as bytes
     """
-    result = remove_watermark(image_bytes)
+    result = remove_watermark(image_bytes, allow_fallback=allow_fallback)
     output = BytesIO()
 
     save_kwargs = {"format": output_format}
