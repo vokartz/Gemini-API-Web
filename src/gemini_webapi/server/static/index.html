@@ -83,15 +83,6 @@
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <h2>Son Üretilen Görseller</h2>
-        <button id="refreshMediaBtn" class="small">Yenile</button>
-      </div>
-      <div class="card-body">
-        <div id="mediaList" class="preview"></div>
-      </div>
-    </div>
   </main>
 
   <script src="/static/app.js"></script>
@@ -100,9 +91,8 @@
     let timerHandle = null;
 
     async function init() {
-      await Promise.all([loadGemOptions(), refreshMedia()]);
+      await loadGemOptions();
       $("generateBtn").onclick = onGenerate;
-      $("refreshMediaBtn").onclick = () => refreshMedia().catch((e) => toast(e.message, true));
       $("addRefBtn").onclick = () => $("refInput").click();
       $("refInput").onchange = onPickRefs;
     }

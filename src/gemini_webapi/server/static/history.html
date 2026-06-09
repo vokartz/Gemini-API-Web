@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Üretim Geçmişi · Gemini Panel</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main>
+    <div class="page-title">
+      <h1>Üretim Geçmişi</h1>
+      <p>Tüm görsel üretimleri (panel ve API) — süre, model, hesap ve üretilen görseller.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Geçmiş</h2>
+        <button id="refreshBtn" class="small">Yenile</button>
+      </div>
+      <div class="card-body tight">
+        <div id="historyWrap"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    async function init() {
+      $("refreshBtn").onclick = (e) => withLoading(e.currentTarget, () => refresh().catch((err) => toast(err.message, true)));
+      await refresh();
+    }
+
+    async function refresh() {
+      const data = await api("/v1/generations?limit=100");
+      render(data.generations || []);
+    }
+
+    function render(generations) {
+      const wrap = $("historyWrap");
+      if (!generations.length) {
+        wrap.innerHTML = `<div class="preview-empty">Henüz üretim kaydı yok.</div>`;
+        return;
+      }
+      wrap.innerHTML = `
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>Tarih</th>
+              <th>Süre</th>
+              <th>Model</th>
+              <th>Hesap</th>
+              <th>Kaynak</th>
+              <th>Görseller</th>
+            </tr>
+          </thead>
+          <tbody>${generations.map(rowHtml).join("")}</tbody>
+        </table>`;
+
+      wrap.querySelectorAll("[data-zoom]").forEach((t) => {
+        t.onclick = () => openZoom(t.dataset.zoom, t.dataset.title);
+      });
+    }
+
+    function sourceLabel(endpoint) {
+      if (endpoint === "/v1/generate") return "Panel";
+      return "API";
+    }
+
+    function rowHtml(g) {
+      const count = (g.images || []).length || g.media_count || 0;
+      const thumbs = (g.images || []).map((img, i) => {
+        const main = img.url || img.png_url || img.jpg_url;
+        if (!main) return "";
+        const title = esc(img.title || ("Görsel " + (i + 1)));
+        return `<span class="thumb" data-zoom="${esc(main)}" data-title="${title}"><img src="${esc(main)}" alt="görsel ${i + 1}" loading="lazy"></span>`;
+      }).join("");
+      const imagesCell = thumbs
+        ? `<div class="thumb-row">${thumbs}</div>`
+        : `<span class="hint">${count} görsel</span>`;
+      return `<tr>
+        <td>${esc(fmt(g.time))}</td>
+        <td><b>${esc(fmtSeconds(g.duration_ms))}</b></td>
+        <td><span class="mono">${esc(g.model || "-")}</span></td>
+        <td>${esc(g.account_name || ("#" + (g.account_id ?? "-")))}</td>
+        <td><span class="pill">${esc(sourceLabel(g.endpoint))}</span></td>
+        <td>${imagesCell}</td>
+      </tr>`;
+    }
+
+    bootstrap(init);
+  </script>
+</body>
+</html>

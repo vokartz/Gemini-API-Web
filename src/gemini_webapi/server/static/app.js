@@ -64,9 +64,11 @@ const ICONS = {
   accounts: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   gems: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 13L2 9z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg>',
   api: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+  history: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>',
 };
 const NAV = [
   { href: "/", label: "Görsel Üretimi", icon: "generate" },
+  { href: "/history.html", label: "Üretim Geçmişi", icon: "history" },
   { href: "/accounts.html", label: "Hesaplar & Kota", icon: "accounts" },
   { href: "/gems.html", label: "Gems", icon: "gems" },
   { href: "/api.html", label: "API & Ayarlar", icon: "api" },
@@ -245,4 +247,23 @@ function fmtBytes(n) {
   if (v < 1024) return `${v} B`;
   if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
   return `${(v / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fmtSeconds(ms) {
+  const v = Math.max(0, Number(ms || 0)) / 1000;
+  return `${v.toFixed(1)}s`;
+}
+
+// Asenkron buton işlemleri sırasında spinner gösterir ve butonu devre dışı bırakır.
+async function withLoading(btn, fn) {
+  if (!btn) return fn();
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> ${esc(btn.textContent.trim())}`;
+  try {
+    return await fn();
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
 }

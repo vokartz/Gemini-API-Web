@@ -837,6 +837,19 @@ class AccountStore:
             ).fetchall()
         return [self._row_to_media_output(row) for row in rows]
 
+    def list_media_outputs_by_request_ids(
+        self, request_ids: list[str]
+    ) -> list[MediaOutput]:
+        ids = [rid for rid in request_ids if rid]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT * FROM media_outputs WHERE request_id IN ({placeholders}) ORDER BY id ASC",
+            tuple(ids),
+        ).fetchall()
+        return [self._row_to_media_output(row) for row in rows]
+
     def get_media_output_by_token(self, token: str) -> MediaOutput | None:
         row = self.conn.execute(
             "SELECT * FROM media_outputs WHERE token = ?", (token,)

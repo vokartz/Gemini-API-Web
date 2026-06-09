@@ -56,7 +56,7 @@ MEDIA_CONTENT_ALLOWED_HOST_SUFFIXES = (
 )
 SYSTEM_SETTINGS_KEY = "system_settings"
 MASKED_SECRET = "********"
-PAGE_ROUTES = {"/", "/accounts.html", "/gems.html", "/api.html"}
+PAGE_ROUTES = {"/", "/accounts.html", "/gems.html", "/api.html", "/history.html"}
 DEFAULT_SYSTEM_SETTINGS = {
     "api_keys": [],
     "object_storage": {
@@ -861,6 +861,10 @@ def create_app(config: ServerConfig | None = None):
     async def page_api() -> FileResponse:
         return _page("api.html")
 
+    @app.get("/history.html")
+    async def page_history() -> FileResponse:
+        return _page("history.html")
+
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {"ok": True}
@@ -1019,6 +1023,77 @@ def create_app(config: ServerConfig | None = None):
                 )
             ]
         }
+
+    def _media_content_url(item: Any) -> str:
+        storage = (item.metadata or {}).get("object_storage") or {}
+        if storage.get("url"):
+            return storage["url"]
+        if item.token:
+            return f"/v1/gemini/media/{item.token}/content"
+        return item.url
+
+    @app.get("/v1/generations")
+    async def list_generations(limit: int = 50) -> dict[str, Any]:
+        # Üretim geçmişi: başarılı üretim isteklerini (panel + harici API) süreleriyle birlikte
+        # döndürür ve her isteğin ürettiği görselleri PNG/JPG varyantlarına göre tekilleştirerek ekler.
+        generation_endpoints = {
+            "/v1/generate",
+            "/v1/gemini/generate",
+            "/v1/gemini/stream",
+        }
+        logs = [
+            log
+            for log in store.list_request_logs(limit=max(1, min(limit * 4, 1000)))
+            if log.ok
+            and log.endpoint in generation_endpoints
+            and not (log.output_type or "").endswith("_generation_attempt")
+            and log.job_id
+        ]
+        logs = logs[: max(1, min(limit, 200))]
+        request_ids = [log.job_id for log in logs]
+        media_by_request: dict[str, list[Any]] = {}
+        for item in store.list_media_outputs_by_request_ids(request_ids):
+            media_by_request.setdefault(item.request_id, []).append(item)
+
+        generations: list[dict[str, Any]] = []
+        for log in logs:
+            grouped: dict[str, dict[str, Any]] = {}
+            order: list[str] = []
+            for item in media_by_request.get(log.job_id, []):
+                if item.kind != "image":
+                    continue
+                metadata = item.metadata or {}
+                variant_key = metadata.get("variant_key") or f"{item.id}"
+                image_format = metadata.get("image_format")
+                if variant_key not in grouped:
+                    grouped[variant_key] = {"title": item.title, "png_url": None, "jpg_url": None}
+                    order.append(variant_key)
+                url = _media_content_url(item)
+                if image_format == "jpeg":
+                    grouped[variant_key]["jpg_url"] = url
+                elif image_format == "png":
+                    grouped[variant_key]["png_url"] = url
+                else:
+                    grouped[variant_key]["png_url"] = grouped[variant_key]["png_url"] or url
+            images = []
+            for key in order:
+                entry = grouped[key]
+                entry["url"] = entry["png_url"] or entry["jpg_url"]
+                images.append(entry)
+            generations.append(
+                {
+                    "request_id": log.job_id,
+                    "time": log.time,
+                    "duration_ms": log.duration_ms,
+                    "model": log.model,
+                    "account_name": log.account_name,
+                    "account_id": log.account_id,
+                    "endpoint": log.endpoint,
+                    "media_count": log.media_count,
+                    "images": images,
+                }
+            )
+        return {"generations": generations}
 
     @app.get("/v1/gemini/media/{media_token}/content")
     async def gemini_media_content(media_token: str) -> Response:
